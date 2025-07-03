@@ -1,13 +1,15 @@
-# Audio Processing - Voice Segment Removal
+# Audio/Video Processing - Voice Segment Removal
 
-A Python tool that automatically detects and removes voice segments from audio files using AI-powered voice activity detection and FFmpeg processing.
+A Python tool that automatically detects and removes voice segments from audio and video files using AI-powered voice activity detection and FFmpeg processing.
 
 ## Features
 
 - **AI-Powered Voice Detection**: Uses pyannote.audio's state-of-the-art voice activity detection model
-- **Automatic Voice Removal**: Zeros out detected voice segments while preserving background audio
+- **Audio & Video Support**: Works with both audio files and video files (preserves video quality)
+- **Automatic Voice Removal**: Zeros out detected voice segments while preserving background audio/music
+- **Video Quality Preservation**: For video files, copies video stream without re-encoding for maximum quality
 - **Flexible Configuration**: Adjustable parameters for detection sensitivity
-- **High-Quality Output**: Maintains audio quality with configurable bitrate settings
+- **High-Quality Output**: Maintains audio/video quality with configurable bitrate settings
 - **Easy to Use**: Simple command-line interface
 
 ## Requirements
@@ -79,12 +81,21 @@ uv run main.py input_audio.mp3
 
 This will create `input_audio_no_conversations.mp3` with voice segments zeroed out.
 
+Remove voice segments from a video file:
+
+```bash
+uv run main.py input_video.mp4
+```
+
+This will create `input_video_no_conversations.mp4` with voice segments zeroed out while preserving the original video quality.
+
 ### Custom Output Path
 
 Specify a custom output file:
 
 ```bash
 uv run main.py input_audio.mp3 -o output_audio.mp3
+uv run main.py input_video.mp4 -o output_video.mp4
 ```
 
 ### Advanced Options
@@ -96,11 +107,16 @@ uv run main.py input_audio.mp3 \
   --min-duration-on 0.2 \
   --min-duration-off 0.1 \
   -o processed_audio.mp3
+
+uv run main.py input_video.mp4 \
+  --min-duration-on 0.2 \
+  --min-duration-off 0.1 \
+  -o processed_video.mp4
 ```
 
 ### Parameters
 
-- `input_file`: Path to the input audio file (required)
+- `input_file`: Path to the input audio or video file (required)
 - `-o, --output`: Custom output file path (optional)
 - `--min-duration-on`: Minimum duration for speech regions in seconds (default: 0.1)
 - `--min-duration-off`: Minimum duration for non-speech regions in seconds (default: 0.1)
@@ -115,27 +131,55 @@ uv run main.py --help
 
 ## How It Works
 
+### For Audio Files
 1. **Voice Activity Detection**: The script uses pyannote.audio's segmentation model to identify voice segments in the audio
 2. **Segment Processing**: Detected voice segments are mapped to time intervals
 3. **Audio Processing**: FFmpeg applies volume filters to zero out voice segments while preserving the rest of the audio
 4. **Output Generation**: Creates a new audio file with voice segments removed
 
-## Supported Audio Formats
+### For Video Files
+1. **Audio Extraction**: Temporarily extracts audio from the video for analysis
+2. **Voice Activity Detection**: Uses pyannote.audio to identify voice segments in the extracted audio
+3. **Video Processing**: FFmpeg processes the original video, copying the video stream without re-encoding while applying voice removal filters to the audio track
+4. **Output Generation**: Creates a new video file with original video quality and processed audio
 
+## Supported Formats
+
+### Audio Formats
 The script supports any audio format that is supported by torchaudio, including:
 - **MP3**
 - **WAV** (recommended)
 - **FLAC**
+- **AAC**
+- **OGG**
+- **M4A**
+
+### Video Formats
+The script supports common video formats:
+- **MP4** (recommended)
+- **AVI**
+- **MOV**
+- **MKV**
+- **WEBM**
+- **FLV**
+- **WMV**
+- **M4V**
 
 ### Format Conversion (if needed)
 
-If you encounter issues with a specific format, you can convert it using FFmpeg. For example, to convert M4A to WAV:
+If you encounter issues with a specific format, you can convert it using FFmpeg. For example:
 
 ```bash
+# Convert M4A to WAV
 ffmpeg -i input_file.m4a output_file.wav
+
+# Convert MKV to MP4
+ffmpeg -i input_file.mkv -c copy output_file.mp4
 ```
 
-Output is generated as MP3 with 192kbps bitrate by default.
+Output formats:
+- Audio files: MP3 with 192kbps bitrate by default
+- Video files: Original video codec (copied), AAC audio with 192kbps bitrate
 
 ## Troubleshooting
 
