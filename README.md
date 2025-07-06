@@ -5,6 +5,8 @@ A Python tool that automatically detects and removes voice segments from audio a
 ## Features
 
 - **AI-Powered Voice Detection**: Uses pyannote.audio's state-of-the-art voice activity detection model
+- **Multiple Speaker Detection**: Identifies if multiple speakers are present in the audio/video
+- **Overlapped Speech Analysis**: Detects when multiple speakers are talking simultaneously
 - **Audio & Video Support**: Works with both audio files and video files (preserves video quality)
 - **Automatic Voice Removal**: Zeros out detected voice segments while preserving background audio/music
 - **Video Quality Preservation**: For video files, copies video stream without re-encoding for maximum quality
@@ -98,6 +100,39 @@ uv run main.py input_audio.mp3 -o output_audio.mp3
 uv run main.py input_video.mp4 -o output_video.mp4
 ```
 
+### Speaker Analysis
+
+Analyze if multiple speakers are present in your audio/video:
+
+```bash
+# Analyze speakers and then process the file
+uv run main.py input_audio.mp3 --analyze-speakers
+
+# Only analyze speakers without processing
+uv run main.py input_audio.mp3 --speaker-analysis-only
+
+# Use detailed analysis (more accurate but slower)
+uv run main.py input_audio.mp3 --speaker-analysis-only --detailed-analysis
+```
+
+### Timeline Generation
+
+Generate detailed JSON timeline with speaker information:
+
+```bash
+# Generate timeline and process the file
+uv run main.py input_audio.mp3 --generate-timeline
+
+# Only generate timeline without processing
+uv run main.py input_audio.mp3 --speaker-analysis-only --generate-timeline
+
+# Specify custom timeline output path
+uv run main.py input_audio.mp3 --generate-timeline --timeline-output my_timeline.json
+
+# Combine speaker analysis with timeline generation
+uv run main.py input_audio.mp3 --analyze-speakers --generate-timeline
+```
+
 ### Advanced Options
 
 Fine-tune the voice detection parameters:
@@ -106,11 +141,13 @@ Fine-tune the voice detection parameters:
 uv run main.py input_audio.mp3 \
   --min-duration-on 0.2 \
   --min-duration-off 0.1 \
+  --analyze-speakers \
   -o processed_audio.mp3
 
 uv run main.py input_video.mp4 \
   --min-duration-on 0.2 \
   --min-duration-off 0.1 \
+  --analyze-speakers \
   -o processed_video.mp4
 ```
 
@@ -120,6 +157,11 @@ uv run main.py input_video.mp4 \
 - `-o, --output`: Custom output file path (optional)
 - `--min-duration-on`: Minimum duration for speech regions in seconds (default: 0.1)
 - `--min-duration-off`: Minimum duration for non-speech regions in seconds (default: 0.1)
+- `--analyze-speakers`: Analyze and report if multiple speakers are detected
+- `--speaker-analysis-only`: Only analyze speakers without processing the file
+- `--detailed-analysis`: Use detailed direct model analysis for speaker detection (more accurate but slower)
+- `--generate-timeline`: Generate JSON timeline with speaker analysis
+- `--timeline-output`: Path for timeline JSON file (default: input_filename_timeline.json)
 
 ### Help
 
@@ -131,17 +173,24 @@ uv run main.py --help
 
 ## How It Works
 
+### Speaker Analysis
+1. **Overlapped Speech Detection**: Uses pyannote.audio to detect when multiple speakers are talking simultaneously
+2. **Direct Model Analysis**: Optionally analyzes raw model output to detect multiple speakers in audio chunks
+3. **Statistical Analysis**: Calculates confidence scores and overlap percentages to determine if multiple speakers are present
+
 ### For Audio Files
 1. **Voice Activity Detection**: The script uses pyannote.audio's segmentation model to identify voice segments in the audio
-2. **Segment Processing**: Detected voice segments are mapped to time intervals
-3. **Audio Processing**: FFmpeg applies volume filters to zero out voice segments while preserving the rest of the audio
-4. **Output Generation**: Creates a new audio file with voice segments removed
+2. **Speaker Analysis** (optional): Analyzes if multiple speakers are present using overlapped speech detection
+3. **Segment Processing**: Detected voice segments are mapped to time intervals
+4. **Audio Processing**: FFmpeg applies volume filters to zero out voice segments while preserving the rest of the audio
+5. **Output Generation**: Creates a new audio file with voice segments removed
 
 ### For Video Files
 1. **Audio Extraction**: Temporarily extracts audio from the video for analysis
 2. **Voice Activity Detection**: Uses pyannote.audio to identify voice segments in the extracted audio
-3. **Video Processing**: FFmpeg processes the original video, copying the video stream without re-encoding while applying voice removal filters to the audio track
-4. **Output Generation**: Creates a new video file with original video quality and processed audio
+3. **Speaker Analysis** (optional): Analyzes if multiple speakers are present in the extracted audio
+4. **Video Processing**: FFmpeg processes the original video, copying the video stream without re-encoding while applying voice removal filters to the audio track
+5. **Output Generation**: Creates a new video file with original video quality and processed audio
 
 ## Supported Formats
 
@@ -180,6 +229,63 @@ ffmpeg -i input_file.mkv -c copy output_file.mp4
 Output formats:
 - Audio files: MP3 with 192kbps bitrate by default
 - Video files: Original video codec (copied), AAC audio with 192kbps bitrate
+
+## Timeline JSON Format
+
+When using `--generate-timeline`, the tool generates a JSON file with detailed speaker analysis:
+
+```json
+{
+  "timeline": [
+    {
+      "start": "0:00.000",
+      "end": "0:02.500",
+      "duration": "0:02.500",
+      "type": "silence",
+      "speakers": 0,
+      "label": "silence"
+    },
+    {
+      "start": "0:02.500",
+      "end": "0:08.300",
+      "duration": "0:05.800",
+      "type": "speech",
+      "speakers": 1,
+      "label": "speaking"
+    },
+    {
+      "start": "0:08.300",
+      "end": "0:15.700",
+      "duration": "0:07.400",
+      "type": "speech",
+      "speakers": 2,
+      "label": "conversation"
+    }
+  ],
+  "summary": {
+    "total_duration": "0:15.700",
+    "total_speech_time": "0:13.200",
+    "total_conversation_time": "0:07.400",
+    "total_speaking_time": "0:05.800",
+    "total_silence_time": "0:02.500",
+    "speech_percentage": 84.1,
+    "conversation_percentage": 47.1,
+    "has_multiple_speakers": true,
+    "num_segments": 3
+  },
+  "has_multiple_speakers": true
+}
+```
+
+### Timeline Segment Types:
+- **silence**: No speech detected
+- **speaking**: Single speaker detected
+- **conversation**: Multiple speakers detected (simultaneous or overlapped speech)
+
+### Labels:
+- **silence**: No voice activity
+- **speaking**: Single person speaking
+- **conversation**: Multiple people speaking (indicates dialogue/conversation)
 
 ## Troubleshooting
 

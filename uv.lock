@@ -149,6 +149,7 @@ dependencies = [
     { name = "numpy" },
     { name = "pyannote-audio" },
     { name = "python-dotenv" },
+    { name = "torchaudio" },
     { name = "transformers" },
 ]
 
@@ -159,6 +160,7 @@ requires-dist = [
     { name = "numpy", specifier = "<2.3" },
     { name = "pyannote-audio", specifier = ">=3.3.2" },
     { name = "python-dotenv", specifier = ">=1.1.1" },
+    { name = "torchaudio", specifier = ">=2.7.1" },
     { name = "transformers", specifier = ">=4.53.0" },
 ]
 
