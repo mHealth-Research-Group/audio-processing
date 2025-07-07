@@ -59,7 +59,9 @@ def detect_voice_segments(audio_path, model, min_duration_on=0.1, min_duration_o
     return voice_segments
 
 
-def detect_multiple_speakers(audio_path, model, min_duration_on=0.1, min_duration_off=0.1):
+def detect_multiple_speakers(
+    audio_path, model, min_duration_on=0.1, min_duration_off=0.1
+):
     """
     Detect if there are multiple speakers in the audio file.
 
@@ -107,7 +109,11 @@ def detect_multiple_speakers(audio_path, model, min_duration_on=0.1, min_duratio
         total_speech_duration += segment.end - segment.start
 
     # Calculate overlap percentage
-    overlap_percentage = (overlapped_duration / total_speech_duration * 100) if total_speech_duration > 0 else 0
+    overlap_percentage = (
+        (overlapped_duration / total_speech_duration * 100)
+        if total_speech_duration > 0
+        else 0
+    )
 
     # Determine if multiple speakers are present
     # Multiple speakers are likely if:
@@ -169,7 +175,9 @@ def analyze_speaker_segments_direct(audio_path, model, chunk_duration=10.0):
         # Initialize powerset decoder
         max_speakers_per_chunk = 3
         max_speakers_per_frame = 2
-        to_multilabel = Powerset(max_speakers_per_chunk, max_speakers_per_frame).to_multilabel
+        to_multilabel = Powerset(
+            max_speakers_per_chunk, max_speakers_per_frame
+        ).to_multilabel
 
         for start_sample in range(0, total_samples, chunk_size):
             end_sample = min(start_sample + chunk_size, total_samples)
@@ -212,14 +220,18 @@ def analyze_speaker_segments_direct(audio_path, model, chunk_duration=10.0):
                     if num_speakers > 1:
                         frame_start = chunk_start_time + frame_idx * frame_duration
                         frame_end = frame_start + frame_duration
-                        speaker_segments.append({
-                            "start": frame_start,
-                            "end": frame_end,
-                            "num_speakers": num_speakers.item(),
-                        })
+                        speaker_segments.append(
+                            {
+                                "start": frame_start,
+                                "end": frame_end,
+                                "num_speakers": num_speakers.item(),
+                            }
+                        )
 
         # Calculate confidence score
-        confidence_score = (multi_speaker_chunks / total_chunks) if total_chunks > 0 else 0
+        confidence_score = (
+            (multi_speaker_chunks / total_chunks) if total_chunks > 0 else 0
+        )
 
         # Determine if multiple speakers are present
         has_multiple_speakers = max_speakers_detected > 1 and confidence_score > 0.1
@@ -297,7 +309,9 @@ def process_audio_with_ffmpeg(input_path, output_path, voice_segments):
         "csv=p=0",
         str(input_path),
     ]
-    duration_result = subprocess.run(duration_cmd, capture_output=True, text=True, check=True)
+    duration_result = subprocess.run(
+        duration_cmd, capture_output=True, text=True, check=True
+    )
     audio_duration = float(duration_result.stdout.strip())
 
     # Create ffmpeg filter
@@ -382,7 +396,9 @@ def process_video_with_ffmpeg(input_path, output_path, voice_segments):
         return
 
     # Create ffmpeg filter for audio
-    volume_filter = create_ffmpeg_filter(voice_segments, None)  # Duration not needed for video processing
+    volume_filter = create_ffmpeg_filter(
+        voice_segments, None
+    )  # Duration not needed for video processing
 
     # Build ffmpeg command for video processing
     ffmpeg_cmd = [
@@ -408,7 +424,9 @@ def process_video_with_ffmpeg(input_path, output_path, voice_segments):
     subprocess.run(ffmpeg_cmd, check=True)
 
 
-def generate_speaker_timeline(audio_path, model, min_duration_on=0.1, min_duration_off=0.1, frame_duration=0.1):
+def generate_speaker_timeline(
+    audio_path, model, min_duration_on=0.1, min_duration_off=0.1, frame_duration=0.1
+):
     """
     Generate a detailed timeline of speaker activity for JSON output.
 
@@ -443,8 +461,12 @@ def generate_speaker_timeline(audio_path, model, min_duration_on=0.1, min_durati
         overlapped_result = osd_pipeline(audio_path)
 
         # Convert results to lists for easier processing
-        voice_segments = [(segment.start, segment.end) for segment in vad_result.itersegments()]
-        overlapped_segments = [(segment.start, segment.end) for segment in overlapped_result.itersegments()]
+        voice_segments = [
+            (segment.start, segment.end) for segment in vad_result.itersegments()
+        ]
+        overlapped_segments = [
+            (segment.start, segment.end) for segment in overlapped_result.itersegments()
+        ]
 
         # Debug output
         print(f"   Voice segments detected: {len(voice_segments)}")
@@ -473,7 +495,9 @@ def generate_speaker_timeline(audio_path, model, min_duration_on=0.1, min_durati
         # Initialize powerset decoder for detailed analysis
         max_speakers_per_chunk = 3
         max_speakers_per_frame = 2
-        to_multilabel = Powerset(max_speakers_per_chunk, max_speakers_per_frame).to_multilabel
+        to_multilabel = Powerset(
+            max_speakers_per_chunk, max_speakers_per_frame
+        ).to_multilabel
 
         # Process audio in chunks for speaker counting
         chunk_duration = 10.0
@@ -504,13 +528,19 @@ def generate_speaker_timeline(audio_path, model, min_duration_on=0.1, min_durati
             frames_per_chunk = speaker_activity.shape[0]
 
             for frame_idx, num_speakers in enumerate(active_speakers_per_frame):
-                frame_start = chunk_start_time + (frame_idx * chunk_duration / frames_per_chunk)
-                frame_end = min(frame_start + (chunk_duration / frames_per_chunk), total_duration)
-                speaker_counts_timeline.append({
-                    "start": frame_start,
-                    "end": frame_end,
-                    "speaker_count": num_speakers.item(),
-                })
+                frame_start = chunk_start_time + (
+                    frame_idx * chunk_duration / frames_per_chunk
+                )
+                frame_end = min(
+                    frame_start + (chunk_duration / frames_per_chunk), total_duration
+                )
+                speaker_counts_timeline.append(
+                    {
+                        "start": frame_start,
+                        "end": frame_end,
+                        "speaker_count": num_speakers.item(),
+                    }
+                )
 
         # Generate timeline segments
         timeline = []
@@ -574,7 +604,9 @@ def generate_speaker_timeline(audio_path, model, min_duration_on=0.1, min_durati
                 )
                 return base_segment
 
-            speaker_count = max(get_speaker_count_at_time(start), get_speaker_count_at_time(end))
+            speaker_count = max(
+                get_speaker_count_at_time(start), get_speaker_count_at_time(end)
+            )
 
             if overlapped or speaker_count > 1:
                 base_segment.update(
@@ -600,8 +632,12 @@ def generate_speaker_timeline(audio_path, model, min_duration_on=0.1, min_durati
 
             # Create segment for the period before this event
             if event_time > segment_start:
-                segment = create_segment(segment_start, event_time, is_voice_active, is_overlapped)
-                if segment["duration_seconds"] > 0.05:  # Only include segments longer than 50ms
+                segment = create_segment(
+                    segment_start, event_time, is_voice_active, is_overlapped
+                )
+                if (
+                    segment["duration_seconds"] > 0.05
+                ):  # Only include segments longer than 50ms
                     timeline.append(segment)
 
             # Update state based on event
@@ -618,7 +654,9 @@ def generate_speaker_timeline(audio_path, model, min_duration_on=0.1, min_durati
 
         # Add final segment if needed
         if segment_start < total_duration:
-            segment = create_segment(segment_start, total_duration, is_voice_active, is_overlapped)
+            segment = create_segment(
+                segment_start, total_duration, is_voice_active, is_overlapped
+            )
             if segment["duration_seconds"] > 0.05:
                 timeline.append(segment)
 
@@ -629,10 +667,20 @@ def generate_speaker_timeline(audio_path, model, min_duration_on=0.1, min_durati
         print(f"   Timeline segments created: {len(timeline)}")
 
         # Calculate summary statistics (use raw seconds for calculations)
-        total_speech_time = sum(seg["duration_seconds"] for seg in timeline if seg["type"] == "speech")
-        total_conversation_time = sum(seg["duration_seconds"] for seg in timeline if seg["label"] == "conversation")
-        total_speaking_time = sum(seg["duration_seconds"] for seg in timeline if seg["label"] == "speaking")
-        total_silence_time = sum(seg["duration_seconds"] for seg in timeline if seg["type"] == "silence")
+        total_speech_time = sum(
+            seg["duration_seconds"] for seg in timeline if seg["type"] == "speech"
+        )
+        total_conversation_time = sum(
+            seg["duration_seconds"]
+            for seg in timeline
+            if seg["label"] == "conversation"
+        )
+        total_speaking_time = sum(
+            seg["duration_seconds"] for seg in timeline if seg["label"] == "speaking"
+        )
+        total_silence_time = sum(
+            seg["duration_seconds"] for seg in timeline if seg["type"] == "silence"
+        )
 
         has_multiple_speakers = any(seg["speakers"] > 1 for seg in timeline)
 
@@ -651,8 +699,12 @@ def generate_speaker_timeline(audio_path, model, min_duration_on=0.1, min_durati
             "total_conversation_time": seconds_to_mmss(total_conversation_time),
             "total_speaking_time": seconds_to_mmss(total_speaking_time),
             "total_silence_time": seconds_to_mmss(total_silence_time),
-            "speech_percentage": round((total_speech_time / total_duration) * 100, 1) if total_duration > 0 else 0,
-            "conversation_percentage": round((total_conversation_time / total_duration) * 100, 1)
+            "speech_percentage": round((total_speech_time / total_duration) * 100, 1)
+            if total_duration > 0
+            else 0,
+            "conversation_percentage": round(
+                (total_conversation_time / total_duration) * 100, 1
+            )
             if total_duration > 0
             else 0,
             "has_multiple_speakers": has_multiple_speakers,
@@ -746,14 +798,19 @@ def main():
     is_audio = is_audio_file(input_path)
 
     if not (is_video or is_audio):
-        raise ValueError(f"Unsupported file format. Supported formats: {VIDEO_EXTENSIONS | AUDIO_EXTENSIONS}")
+        raise ValueError(
+            f"Unsupported file format. Supported formats: {VIDEO_EXTENSIONS | AUDIO_EXTENSIONS}"
+        )
 
     # Determine output path
     if args.output:
         output_path = Path(args.output)
     else:
         if is_video:
-            output_path = input_path.parent / f"{input_path.stem}_no_conversations{input_path.suffix}"
+            output_path = (
+                input_path.parent
+                / f"{input_path.stem}_no_conversations{input_path.suffix}"
+            )
         else:
             output_path = input_path.parent / f"{input_path.stem}_no_conversations.mp3"
 
@@ -776,18 +833,26 @@ def main():
                     print(f"\n🔍 Analyzing speakers in video: {input_path}")
 
                     if args.detailed_analysis:
-                        speaker_analysis = analyze_speaker_segments_direct(temp_audio_path, model)
+                        speaker_analysis = analyze_speaker_segments_direct(
+                            temp_audio_path, model
+                        )
                         print("📊 Detailed Speaker Analysis Results:")
                         print(
                             f"   Multiple speakers detected: {'✓ YES' if speaker_analysis['has_multiple_speakers'] else '✗ NO'}"
                         )
-                        print(f"   Maximum speakers detected: {speaker_analysis['max_speakers_detected']}")
-                        print(f"   Confidence score: {speaker_analysis['confidence_score']:.2f}")
+                        print(
+                            f"   Maximum speakers detected: {speaker_analysis['max_speakers_detected']}"
+                        )
+                        print(
+                            f"   Confidence score: {speaker_analysis['confidence_score']:.2f}"
+                        )
                         print(
                             f"   Multi-speaker chunks: {speaker_analysis['multi_speaker_chunks']}/{speaker_analysis['total_chunks']}"
                         )
                         if speaker_analysis["speaker_segments"]:
-                            print(f"   Multi-speaker segments: {len(speaker_analysis['speaker_segments'])} segments")
+                            print(
+                                f"   Multi-speaker segments: {len(speaker_analysis['speaker_segments'])} segments"
+                            )
                     else:
                         speaker_analysis = detect_multiple_speakers(
                             temp_audio_path,
@@ -799,11 +864,15 @@ def main():
                         print(
                             f"   Multiple speakers detected: {'✓ YES' if speaker_analysis['has_multiple_speakers'] else '✗ NO'}"
                         )
-                        print(f"   Total speech duration: {speaker_analysis['total_speech_duration']:.2f} seconds")
+                        print(
+                            f"   Total speech duration: {speaker_analysis['total_speech_duration']:.2f} seconds"
+                        )
                         print(
                             f"   Overlapped speech duration: {speaker_analysis['overlapped_speech_duration']:.2f} seconds"
                         )
-                        print(f"   Overlap percentage: {speaker_analysis['overlap_percentage']:.1f}%")
+                        print(
+                            f"   Overlap percentage: {speaker_analysis['overlap_percentage']:.1f}%"
+                        )
                         if speaker_analysis["overlapped_speech_segments"]:
                             print(
                                 f"   Overlapped speech segments: {len(speaker_analysis['overlapped_speech_segments'])} segments"
@@ -835,18 +904,29 @@ def main():
                     if args.timeline_output:
                         timeline_path = Path(args.timeline_output)
                     else:
-                        timeline_path = input_path.parent / f"{input_path.stem}_timeline.json"
+                        timeline_path = (
+                            input_path.parent / f"{input_path.stem}_timeline.json"
+                        )
 
                     # Save timeline to JSON
                     with open(timeline_path, "w") as f:
                         # Prepare data for JSON output (without internal fields)
-                        json_output = {"timeline": timeline_data["timeline"], "summary": timeline_data["summary"]}
+                        json_output = {
+                            "timeline": timeline_data["timeline"],
+                            "summary": timeline_data["summary"],
+                        }
                         json.dump(json_output, f, indent=2)
 
                     print(f"📄 Timeline saved to: {timeline_path}")
-                    print(f"   Total segments: {timeline_data['summary']['num_segments']}")
-                    print(f"   Speech time: {timeline_data['summary']['total_speech_time']}")
-                    print(f"   Conversation time: {timeline_data['summary']['total_conversation_time']}")
+                    print(
+                        f"   Total segments: {timeline_data['summary']['num_segments']}"
+                    )
+                    print(
+                        f"   Speech time: {timeline_data['summary']['total_speech_time']}"
+                    )
+                    print(
+                        f"   Conversation time: {timeline_data['summary']['total_conversation_time']}"
+                    )
                     print()
 
                 # Exit early if only analyzing speakers
@@ -857,7 +937,10 @@ def main():
                 if voice_segments is None:
                     print(f"Detecting voice segments in video: {input_path}")
                     voice_segments = detect_voice_segments(
-                        temp_audio_path, model, args.min_duration_on, args.min_duration_off
+                        temp_audio_path,
+                        model,
+                        args.min_duration_on,
+                        args.min_duration_off,
                     )
 
                 print(f"Found {len(voice_segments)} voice segments")
@@ -865,7 +948,9 @@ def main():
                 print("Processing video to remove voice segments...")
                 process_video_with_ffmpeg(input_path, output_path, voice_segments)
 
-                print(f"✓ Successfully created video with zeroed voice segments: {output_path}")
+                print(
+                    f"✓ Successfully created video with zeroed voice segments: {output_path}"
+                )
                 if timeline_data:
                     print(f"✓ Timeline data saved to: {timeline_path}")
 
@@ -881,18 +966,26 @@ def main():
                 print(f"\n🔍 Analyzing speakers in audio: {input_path}")
 
                 if args.detailed_analysis:
-                    speaker_analysis = analyze_speaker_segments_direct(str(input_path), model)
+                    speaker_analysis = analyze_speaker_segments_direct(
+                        str(input_path), model
+                    )
                     print("📊 Detailed Speaker Analysis Results:")
                     print(
                         f"   Multiple speakers detected: {'✓ YES' if speaker_analysis['has_multiple_speakers'] else '✗ NO'}"
                     )
-                    print(f"   Maximum speakers detected: {speaker_analysis['max_speakers_detected']}")
-                    print(f"   Confidence score: {speaker_analysis['confidence_score']:.2f}")
+                    print(
+                        f"   Maximum speakers detected: {speaker_analysis['max_speakers_detected']}"
+                    )
+                    print(
+                        f"   Confidence score: {speaker_analysis['confidence_score']:.2f}"
+                    )
                     print(
                         f"   Multi-speaker chunks: {speaker_analysis['multi_speaker_chunks']}/{speaker_analysis['total_chunks']}"
                     )
                     if speaker_analysis["speaker_segments"]:
-                        print(f"   Multi-speaker segments: {len(speaker_analysis['speaker_segments'])} segments")
+                        print(
+                            f"   Multi-speaker segments: {len(speaker_analysis['speaker_segments'])} segments"
+                        )
                 else:
                     speaker_analysis = detect_multiple_speakers(
                         str(input_path),
@@ -904,11 +997,15 @@ def main():
                     print(
                         f"   Multiple speakers detected: {'✓ YES' if speaker_analysis['has_multiple_speakers'] else '✗ NO'}"
                     )
-                    print(f"   Total speech duration: {speaker_analysis['total_speech_duration']:.2f} seconds")
+                    print(
+                        f"   Total speech duration: {speaker_analysis['total_speech_duration']:.2f} seconds"
+                    )
                     print(
                         f"   Overlapped speech duration: {speaker_analysis['overlapped_speech_duration']:.2f} seconds"
                     )
-                    print(f"   Overlap percentage: {speaker_analysis['overlap_percentage']:.1f}%")
+                    print(
+                        f"   Overlap percentage: {speaker_analysis['overlap_percentage']:.1f}%"
+                    )
                     if speaker_analysis["overlapped_speech_segments"]:
                         print(
                             f"   Overlapped speech segments: {len(speaker_analysis['overlapped_speech_segments'])} segments"
@@ -937,17 +1034,26 @@ def main():
                 if args.timeline_output:
                     timeline_path = Path(args.timeline_output)
                 else:
-                    timeline_path = input_path.parent / f"{input_path.stem}_timeline.json"
+                    timeline_path = (
+                        input_path.parent / f"{input_path.stem}_timeline.json"
+                    )
 
                 # Save timeline to JSON
                 with open(timeline_path, "w") as f:
-                    json_output = {"timeline": timeline_data["timeline"], "summary": timeline_data["summary"]}
+                    json_output = {
+                        "timeline": timeline_data["timeline"],
+                        "summary": timeline_data["summary"],
+                    }
                     json.dump(json_output, f, indent=2)
 
                 print(f"📄 Timeline saved to: {timeline_path}")
                 print(f"   Total segments: {timeline_data['summary']['num_segments']}")
-                print(f"   Speech time: {timeline_data['summary']['total_speech_time']}")
-                print(f"   Conversation time: {timeline_data['summary']['total_conversation_time']}")
+                print(
+                    f"   Speech time: {timeline_data['summary']['total_speech_time']}"
+                )
+                print(
+                    f"   Conversation time: {timeline_data['summary']['total_conversation_time']}"
+                )
                 print()
 
             # Exit early if only analyzing speakers
@@ -966,7 +1072,9 @@ def main():
             print("Processing audio to remove voice segments...")
             process_audio_with_ffmpeg(input_path, output_path, voice_segments)
 
-            print(f"✓ Successfully created audio with zeroed voice segments: {output_path}")
+            print(
+                f"✓ Successfully created audio with zeroed voice segments: {output_path}"
+            )
             if timeline_data:
                 print(f"✓ Timeline data saved to: {timeline_path}")
 
