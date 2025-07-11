@@ -59,9 +59,7 @@ def detect_voice_segments(audio_path, model, min_duration_on=0.1, min_duration_o
     return voice_segments
 
 
-def detect_multiple_speakers(
-    audio_path, model, min_duration_on=0.1, min_duration_off=0.1
-):
+def detect_multiple_speakers(audio_path, model, min_duration_on=0.1, min_duration_off=0.1):
     """
     Detect if there are multiple speakers in the audio file.
 
@@ -109,11 +107,7 @@ def detect_multiple_speakers(
         total_speech_duration += segment.end - segment.start
 
     # Calculate overlap percentage
-    overlap_percentage = (
-        (overlapped_duration / total_speech_duration * 100)
-        if total_speech_duration > 0
-        else 0
-    )
+    overlap_percentage = (overlapped_duration / total_speech_duration * 100) if total_speech_duration > 0 else 0
 
     # Determine if multiple speakers are present
     # Multiple speakers are likely if:
@@ -175,9 +169,7 @@ def analyze_speaker_segments_direct(audio_path, model, chunk_duration=10.0):
         # Initialize powerset decoder
         max_speakers_per_chunk = 3
         max_speakers_per_frame = 2
-        to_multilabel = Powerset(
-            max_speakers_per_chunk, max_speakers_per_frame
-        ).to_multilabel
+        to_multilabel = Powerset(max_speakers_per_chunk, max_speakers_per_frame).to_multilabel
 
         for start_sample in range(0, total_samples, chunk_size):
             end_sample = min(start_sample + chunk_size, total_samples)
@@ -220,18 +212,14 @@ def analyze_speaker_segments_direct(audio_path, model, chunk_duration=10.0):
                     if num_speakers > 1:
                         frame_start = chunk_start_time + frame_idx * frame_duration
                         frame_end = frame_start + frame_duration
-                        speaker_segments.append(
-                            {
-                                "start": frame_start,
-                                "end": frame_end,
-                                "num_speakers": num_speakers.item(),
-                            }
-                        )
+                        speaker_segments.append({
+                            "start": frame_start,
+                            "end": frame_end,
+                            "num_speakers": num_speakers.item(),
+                        })
 
         # Calculate confidence score
-        confidence_score = (
-            (multi_speaker_chunks / total_chunks) if total_chunks > 0 else 0
-        )
+        confidence_score = (multi_speaker_chunks / total_chunks) if total_chunks > 0 else 0
 
         # Determine if multiple speakers are present
         has_multiple_speakers = max_speakers_detected > 1 and confidence_score > 0.1
@@ -309,9 +297,7 @@ def process_audio_with_ffmpeg(input_path, output_path, voice_segments):
         "csv=p=0",
         str(input_path),
     ]
-    duration_result = subprocess.run(
-        duration_cmd, capture_output=True, text=True, check=True
-    )
+    duration_result = subprocess.run(duration_cmd, capture_output=True, text=True, check=True)
     audio_duration = float(duration_result.stdout.strip())
 
     # Create ffmpeg filter
@@ -396,9 +382,7 @@ def process_video_with_ffmpeg(input_path, output_path, voice_segments):
         return
 
     # Create ffmpeg filter for audio
-    volume_filter = create_ffmpeg_filter(
-        voice_segments, None
-    )  # Duration not needed for video processing
+    volume_filter = create_ffmpeg_filter(voice_segments, None)  # Duration not needed for video processing
 
     # Build ffmpeg command for video processing
     ffmpeg_cmd = [
@@ -424,9 +408,7 @@ def process_video_with_ffmpeg(input_path, output_path, voice_segments):
     subprocess.run(ffmpeg_cmd, check=True)
 
 
-def generate_speaker_timeline(
-    audio_path, model, min_duration_on=0.1, min_duration_off=0.1, frame_duration=0.1
-):
+def generate_speaker_timeline(audio_path, model, min_duration_on=0.1, min_duration_off=0.1, frame_duration=0.1):
     """
     Generate a detailed timeline of speaker activity for JSON output.
 
@@ -461,12 +443,8 @@ def generate_speaker_timeline(
         overlapped_result = osd_pipeline(audio_path)
 
         # Convert results to lists for easier processing
-        voice_segments = [
-            (segment.start, segment.end) for segment in vad_result.itersegments()
-        ]
-        overlapped_segments = [
-            (segment.start, segment.end) for segment in overlapped_result.itersegments()
-        ]
+        voice_segments = [(segment.start, segment.end) for segment in vad_result.itersegments()]
+        overlapped_segments = [(segment.start, segment.end) for segment in overlapped_result.itersegments()]
 
         # Debug output
         print(f"   Voice segments detected: {len(voice_segments)}")
@@ -495,9 +473,7 @@ def generate_speaker_timeline(
         # Initialize powerset decoder for detailed analysis
         max_speakers_per_chunk = 3
         max_speakers_per_frame = 2
-        to_multilabel = Powerset(
-            max_speakers_per_chunk, max_speakers_per_frame
-        ).to_multilabel
+        to_multilabel = Powerset(max_speakers_per_chunk, max_speakers_per_frame).to_multilabel
 
         # Process audio in chunks for speaker counting
         chunk_duration = 10.0
@@ -528,19 +504,13 @@ def generate_speaker_timeline(
             frames_per_chunk = speaker_activity.shape[0]
 
             for frame_idx, num_speakers in enumerate(active_speakers_per_frame):
-                frame_start = chunk_start_time + (
-                    frame_idx * chunk_duration / frames_per_chunk
-                )
-                frame_end = min(
-                    frame_start + (chunk_duration / frames_per_chunk), total_duration
-                )
-                speaker_counts_timeline.append(
-                    {
-                        "start": frame_start,
-                        "end": frame_end,
-                        "speaker_count": num_speakers.item(),
-                    }
-                )
+                frame_start = chunk_start_time + (frame_idx * chunk_duration / frames_per_chunk)
+                frame_end = min(frame_start + (chunk_duration / frames_per_chunk), total_duration)
+                speaker_counts_timeline.append({
+                    "start": frame_start,
+                    "end": frame_end,
+                    "speaker_count": num_speakers.item(),
+                })
 
         # Generate timeline segments
         timeline = []
@@ -595,35 +565,27 @@ def generate_speaker_timeline(
             }
 
             if not voice_active:
-                base_segment.update(
-                    {
-                        "type": "silence",
-                        "speakers": 0,
-                        "label": "silence",
-                    }
-                )
+                base_segment.update({
+                    "type": "silence",
+                    "speakers": 0,
+                    "label": "silence",
+                })
                 return base_segment
 
-            speaker_count = max(
-                get_speaker_count_at_time(start), get_speaker_count_at_time(end)
-            )
+            speaker_count = max(get_speaker_count_at_time(start), get_speaker_count_at_time(end))
 
             if overlapped or speaker_count > 1:
-                base_segment.update(
-                    {
-                        "type": "speech",
-                        "speakers": max(speaker_count, 2),
-                        "label": "conversation",
-                    }
-                )
+                base_segment.update({
+                    "type": "speech",
+                    "speakers": max(speaker_count, 2),
+                    "label": "conversation",
+                })
             else:
-                base_segment.update(
-                    {
-                        "type": "speech",
-                        "speakers": max(speaker_count, 1),
-                        "label": "speaking",
-                    }
-                )
+                base_segment.update({
+                    "type": "speech",
+                    "speakers": max(speaker_count, 1),
+                    "label": "speaking",
+                })
             return base_segment
 
         # Process events to create timeline
@@ -632,12 +594,8 @@ def generate_speaker_timeline(
 
             # Create segment for the period before this event
             if event_time > segment_start:
-                segment = create_segment(
-                    segment_start, event_time, is_voice_active, is_overlapped
-                )
-                if (
-                    segment["duration_seconds"] > 0.05
-                ):  # Only include segments longer than 50ms
+                segment = create_segment(segment_start, event_time, is_voice_active, is_overlapped)
+                if segment["duration_seconds"] > 0.05:  # Only include segments longer than 50ms
                     timeline.append(segment)
 
             # Update state based on event
@@ -654,9 +612,7 @@ def generate_speaker_timeline(
 
         # Add final segment if needed
         if segment_start < total_duration:
-            segment = create_segment(
-                segment_start, total_duration, is_voice_active, is_overlapped
-            )
+            segment = create_segment(segment_start, total_duration, is_voice_active, is_overlapped)
             if segment["duration_seconds"] > 0.05:
                 timeline.append(segment)
 
@@ -667,20 +623,10 @@ def generate_speaker_timeline(
         print(f"   Timeline segments created: {len(timeline)}")
 
         # Calculate summary statistics (use raw seconds for calculations)
-        total_speech_time = sum(
-            seg["duration_seconds"] for seg in timeline if seg["type"] == "speech"
-        )
-        total_conversation_time = sum(
-            seg["duration_seconds"]
-            for seg in timeline
-            if seg["label"] == "conversation"
-        )
-        total_speaking_time = sum(
-            seg["duration_seconds"] for seg in timeline if seg["label"] == "speaking"
-        )
-        total_silence_time = sum(
-            seg["duration_seconds"] for seg in timeline if seg["type"] == "silence"
-        )
+        total_speech_time = sum(seg["duration_seconds"] for seg in timeline if seg["type"] == "speech")
+        total_conversation_time = sum(seg["duration_seconds"] for seg in timeline if seg["label"] == "conversation")
+        total_speaking_time = sum(seg["duration_seconds"] for seg in timeline if seg["label"] == "speaking")
+        total_silence_time = sum(seg["duration_seconds"] for seg in timeline if seg["type"] == "silence")
 
         has_multiple_speakers = any(seg["speakers"] > 1 for seg in timeline)
 
@@ -699,12 +645,8 @@ def generate_speaker_timeline(
             "total_conversation_time": seconds_to_mmss(total_conversation_time),
             "total_speaking_time": seconds_to_mmss(total_speaking_time),
             "total_silence_time": seconds_to_mmss(total_silence_time),
-            "speech_percentage": round((total_speech_time / total_duration) * 100, 1)
-            if total_duration > 0
-            else 0,
-            "conversation_percentage": round(
-                (total_conversation_time / total_duration) * 100, 1
-            )
+            "speech_percentage": round((total_speech_time / total_duration) * 100, 1) if total_duration > 0 else 0,
+            "conversation_percentage": round((total_conversation_time / total_duration) * 100, 1)
             if total_duration > 0
             else 0,
             "has_multiple_speakers": has_multiple_speakers,
@@ -715,7 +657,6 @@ def generate_speaker_timeline(
             "timeline": clean_timeline,
             "summary": summary,
             "has_multiple_speakers": has_multiple_speakers,
-            "internal_timeline": timeline,  # Keep for internal use
         }
 
     except Exception as e:
@@ -734,20 +675,143 @@ def generate_speaker_timeline(
                 "num_segments": 0,
             },
             "has_multiple_speakers": False,
-            "internal_timeline": [],
         }
 
 
-def main():
-    """Main function to process audio/video file and zero out voice segments."""
-    parser = argparse.ArgumentParser(
-        description="Remove voice segments from audio or video files using pyannote.audio and ffmpeg"
-    )
-    parser.add_argument("input_file", help="Path to input audio or video file")
+def load_timeline(timeline_path):
+    """Load timeline from JSON file."""
+    with open(timeline_path, "r") as f:
+        return json.load(f)
+
+
+def mmss_to_seconds(mmss_str):
+    """Convert MM:SS.sss format to seconds."""
+    parts = mmss_str.split(":")
+    minutes = int(parts[0])
+    seconds = float(parts[1])
+    return minutes * 60 + seconds
+
+
+def extract_conversation_segments(timeline_data):
+    """Extract conversation segments that should be zeroed out."""
+    segments = []
+
+    for segment in timeline_data["timeline"]:
+        # Zero out segments labeled as 'conversation' (multiple speakers)
+        if segment.get("label") == "conversation":
+            start_seconds = mmss_to_seconds(segment["start"])
+            end_seconds = mmss_to_seconds(segment["end"])
+            segments.append((start_seconds, end_seconds))
+
+    return segments
+
+
+def find_timeline_files(directory):
+    """Find all timeline JSON files in a directory."""
+    timeline_files = []
+    directory = Path(directory)
+
+    for file_path in directory.iterdir():
+        if file_path.is_file() and file_path.name.endswith("_timeline.json"):
+            timeline_files.append(file_path)
+
+    return sorted(timeline_files)
+
+
+def find_media_file_for_timeline(timeline_path):
+    """Find the corresponding media file for a timeline file."""
+    # Remove '_timeline.json' suffix to get base name
+    base_name = timeline_path.stem.replace("_timeline", "")
+    directory = timeline_path.parent
+
+    # Look for video files first, then audio files
+    for ext in VIDEO_EXTENSIONS:
+        media_path = directory / f"{base_name}{ext}"
+        if media_path.exists():
+            return media_path
+
+    for ext in AUDIO_EXTENSIONS:
+        media_path = directory / f"{base_name}{ext}"
+        if media_path.exists():
+            return media_path
+
+    return None
+
+
+def apply_timeline_edits(directory, output_suffix="_edited"):
+    """Apply timeline edits to all media files in a directory based on their timeline JSON files."""
+    # Find all timeline files
+    timeline_files = find_timeline_files(directory)
+
+    if not timeline_files:
+        print(f"No timeline files (*_timeline.json) found in {directory}")
+        return 1
+
+    print(f"Found {len(timeline_files)} timeline files:")
+    for file_path in timeline_files:
+        print(f"  - {file_path.name}")
+    print()
+
+    # Load model once for all files
+    print("Loading pyannote model...")
+    _ = load_model()
+
+    # Process each timeline file
+    for timeline_path in timeline_files:
+        print(f"Processing {timeline_path.name}...")
+
+        # Find corresponding media file
+        media_path = find_media_file_for_timeline(timeline_path)
+        if not media_path:
+            print(f"✗ No media file found for {timeline_path.name}")
+            continue
+
+        print(f"  Found media file: {media_path.name}")
+
+        # Load timeline data
+        try:
+            timeline_data = load_timeline(timeline_path)
+        except Exception as e:
+            print(f"✗ Error loading timeline {timeline_path.name}: {e}")
+            continue
+
+        # Extract conversation segments to zero out
+        conversation_segments = extract_conversation_segments(timeline_data)
+        print(f"  Found {len(conversation_segments)} conversation segments to zero out")
+
+        if not conversation_segments:
+            print("  No conversation segments found, skipping...")
+            continue
+
+        # Create output path
+        output_path = media_path.parent / f"{media_path.stem}{output_suffix}{media_path.suffix}"
+
+        try:
+            print("  Processing media file...")
+            if is_video_file(media_path):
+                process_video_with_ffmpeg(media_path, output_path, conversation_segments)
+            else:
+                process_audio_with_ffmpeg(media_path, output_path, conversation_segments)
+
+            print(f"✓ Created edited file: {output_path.name}")
+
+        except Exception as e:
+            print(f"✗ Error processing {media_path.name}: {e}")
+
+        print()
+
+    print("✓ All files processed!")
+    return 0
+
+
+def add_process_arguments(parser):
+    """Add arguments for the 'process' command to the parser."""
+    parser.add_argument("input_path", help="Path to input audio/video file or directory")
     parser.add_argument(
         "-o",
         "--output",
-        help="Path for output file (default: input_filename_no_conversations.ext)",
+        help="Path for output file (default: input_filename_no_conversations.ext). "
+        "For directory processing, this is an output directory.",
     )
     parser.add_argument(
         "--min-duration-on",
@@ -783,13 +847,101 @@ def main():
     )
     parser.add_argument(
         "--timeline-output",
-        help="Path for timeline JSON file (default: input_filename_timeline.json)",
+        help="Path for timeline JSON file (default: input_filename_timeline.json). "
+        "For directory processing, this is a directory.",
     )
 
-    args = parser.parse_args()
 
-    # Validate input file
-    input_path = Path(args.input_file)
+def find_media_files(directory: Path):
+    """Find all audio and video files in a directory."""
+    media_files = []
+    for file_path in directory.iterdir():
+        if file_path.is_file() and (is_video_file(file_path) or is_audio_file(file_path)):
+            media_files.append(file_path)
+    return sorted(media_files)
+
+
+def _handle_speaker_and_timeline_analysis(args, input_path, model):
+    """Helper function to handle speaker analysis and timeline generation."""
+    # Perform speaker analysis if requested
+    if args.analyze_speakers or args.speaker_analysis_only:
+        print(f"\n🔍 Analyzing speakers in: {input_path}")
+
+        if args.detailed_analysis:
+            speaker_analysis = analyze_speaker_segments_direct(input_path, model)
+            print("📊 Detailed Speaker Analysis Results:")
+            print(f"   Multiple speakers detected: {'✓ YES' if speaker_analysis['has_multiple_speakers'] else '✗ NO'}")
+            print(f"   Maximum speakers detected: {speaker_analysis['max_speakers_detected']}")
+            print(f"   Confidence score: {speaker_analysis['confidence_score']:.2f}")
+            print(
+                f"   Multi-speaker chunks: {speaker_analysis['multi_speaker_chunks']}/{speaker_analysis['total_chunks']}"
+            )
+            if speaker_analysis["speaker_segments"]:
+                print(f"   Multi-speaker segments: {len(speaker_analysis['speaker_segments'])} segments")
+        else:
+            speaker_analysis = detect_multiple_speakers(
+                input_path,
+                model,
+                args.min_duration_on,
+                args.min_duration_off,
+            )
+            print("📊 Speaker Analysis Results:")
+            print(f"   Multiple speakers detected: {'✓ YES' if speaker_analysis['has_multiple_speakers'] else '✗ NO'}")
+            print(f"   Total speech duration: {speaker_analysis['total_speech_duration']:.2f} seconds")
+            print(f"   Overlapped speech duration: {speaker_analysis['overlapped_speech_duration']:.2f} seconds")
+            print(f"   Overlap percentage: {speaker_analysis['overlap_percentage']:.1f}%")
+            if speaker_analysis["overlapped_speech_segments"]:
+                print(f"   Overlapped speech segments: {len(speaker_analysis['overlapped_speech_segments'])} segments")
+
+        print()  # Add blank line for readability
+
+    # Generate timeline if requested
+    timeline_data = None
+    voice_segments = None
+    if args.generate_timeline:
+        print("🕒 Generating speaker timeline...")
+        timeline_data = generate_speaker_timeline(
+            input_path,
+            model,
+            args.min_duration_on,
+            args.min_duration_off,
+        )
+
+        timeline_output_path = None
+        # Note: input_path in this context is the temporary audio file for videos
+        original_input_path = Path(args.input_path)
+        if args.timeline_output:
+            timeline_output_path = Path(args.timeline_output)
+        else:
+            timeline_output_path = original_input_path.parent / f"{original_input_path.stem}_timeline.json"
+
+        # In directory mode, adjust the timeline path
+        if Path(args.input_path).is_dir():
+            timeline_output_path = timeline_output_path.parent / f"{original_input_path.stem}_timeline.json"
+
+        # Save the timeline data
+        with open(timeline_output_path, "w") as f:
+            json.dump(timeline_data, f, indent=2)
+        print(f"✓ Timeline saved to {timeline_output_path}")
+
+        # Use timeline to extract conversation segments if not processing
+        if timeline_data and "timeline" in timeline_data:
+            # Reconstruct voice segments from the public timeline data
+            voice_segments = []
+            for segment in timeline_data["timeline"]:
+                if segment["type"] == "speech":
+                    start_time = mmss_to_seconds(segment["start"])
+                    end_time = mmss_to_seconds(segment["end"])
+                    voice_segments.append((start_time, end_time))
+
+    return voice_segments, timeline_data
+
+
+def process_single_file(args):
+    """Process a single media file."""
+    import sys
+
+    input_path = Path(args.input_path)
     if not input_path.exists():
         raise FileNotFoundError(f"Input file not found: {input_path}")
 
@@ -799,7 +951,7 @@ def main():
 
     if not (is_video or is_audio):
         raise ValueError(
-            f"Unsupported file format. Supported formats: {VIDEO_EXTENSIONS | AUDIO_EXTENSIONS}"
+            f"Unsupported file format for {input_path}. Supported formats: {VIDEO_EXTENSIONS | AUDIO_EXTENSIONS}"
         )
 
     # Determine output path
@@ -807,282 +959,170 @@ def main():
         output_path = Path(args.output)
     else:
         if is_video:
-            output_path = (
-                input_path.parent
-                / f"{input_path.stem}_no_conversations{input_path.suffix}"
-            )
+            output_path = input_path.parent / f"{input_path.stem}_no_conversations{input_path.suffix}"
         else:
             output_path = input_path.parent / f"{input_path.stem}_no_conversations.mp3"
 
     try:
+        print(f"Processing {input_path.name}...")
         print("Loading pyannote model...")
         model = load_model()
 
-        # Handle video files
-        if is_video:
-            # Create temporary file for extracted audio
-            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_audio:
-                temp_audio_path = temp_audio.name
+        # Set the audio path for analysis (original or temp)
+        audio_for_analysis = None
+        temp_audio_path = None
 
-            try:
-                # Extract audio from video
+        try:
+            # Handle video files: extract audio first
+            if is_video:
+                with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_audio:
+                    temp_audio_path = temp_audio.name
                 extract_audio_from_video(input_path, temp_audio_path)
+                audio_for_analysis = temp_audio_path
+            else:
+                # For audio files, use the original path
+                audio_for_analysis = str(input_path)
 
-                # Perform speaker analysis if requested
-                if args.analyze_speakers or args.speaker_analysis_only:
-                    print(f"\n🔍 Analyzing speakers in video: {input_path}")
+            # --- Unified Analysis and Timeline Generation ---
+            voice_segments, timeline_data = _handle_speaker_and_timeline_analysis(args, audio_for_analysis, model)
 
-                    if args.detailed_analysis:
-                        speaker_analysis = analyze_speaker_segments_direct(
-                            temp_audio_path, model
-                        )
-                        print("📊 Detailed Speaker Analysis Results:")
-                        print(
-                            f"   Multiple speakers detected: {'✓ YES' if speaker_analysis['has_multiple_speakers'] else '✗ NO'}"
-                        )
-                        print(
-                            f"   Maximum speakers detected: {speaker_analysis['max_speakers_detected']}"
-                        )
-                        print(
-                            f"   Confidence score: {speaker_analysis['confidence_score']:.2f}"
-                        )
-                        print(
-                            f"   Multi-speaker chunks: {speaker_analysis['multi_speaker_chunks']}/{speaker_analysis['total_chunks']}"
-                        )
-                        if speaker_analysis["speaker_segments"]:
-                            print(
-                                f"   Multi-speaker segments: {len(speaker_analysis['speaker_segments'])} segments"
-                            )
-                    else:
-                        speaker_analysis = detect_multiple_speakers(
-                            temp_audio_path,
-                            model,
-                            args.min_duration_on,
-                            args.min_duration_off,
-                        )
-                        print("📊 Speaker Analysis Results:")
-                        print(
-                            f"   Multiple speakers detected: {'✓ YES' if speaker_analysis['has_multiple_speakers'] else '✗ NO'}"
-                        )
-                        print(
-                            f"   Total speech duration: {speaker_analysis['total_speech_duration']:.2f} seconds"
-                        )
-                        print(
-                            f"   Overlapped speech duration: {speaker_analysis['overlapped_speech_duration']:.2f} seconds"
-                        )
-                        print(
-                            f"   Overlap percentage: {speaker_analysis['overlap_percentage']:.1f}%"
-                        )
-                        if speaker_analysis["overlapped_speech_segments"]:
-                            print(
-                                f"   Overlapped speech segments: {len(speaker_analysis['overlapped_speech_segments'])} segments"
-                            )
-
-                    print()  # Add blank line for readability
-
-                # Generate timeline if requested
-                timeline_data = None
-                voice_segments = None
-                if args.generate_timeline:
-                    print("🕒 Generating speaker timeline...")
-                    timeline_data = generate_speaker_timeline(
-                        temp_audio_path,
-                        model,
-                        args.min_duration_on,
-                        args.min_duration_off,
-                    )
-
-                    # Extract voice segments from the detailed timeline
-                    if timeline_data and "internal_timeline" in timeline_data:
-                        voice_segments = [
-                            (s["start_seconds"], s["end_seconds"])
-                            for s in timeline_data["internal_timeline"]
-                            if s["type"] == "speech"
-                        ]
-
-                    # Determine timeline output path
-                    if args.timeline_output:
-                        timeline_path = Path(args.timeline_output)
-                    else:
-                        timeline_path = (
-                            input_path.parent / f"{input_path.stem}_timeline.json"
-                        )
-
-                    # Save timeline to JSON
-                    with open(timeline_path, "w") as f:
-                        # Prepare data for JSON output (without internal fields)
-                        json_output = {
-                            "timeline": timeline_data["timeline"],
-                            "summary": timeline_data["summary"],
-                        }
-                        json.dump(json_output, f, indent=2)
-
-                    print(f"📄 Timeline saved to: {timeline_path}")
-                    print(
-                        f"   Total segments: {timeline_data['summary']['num_segments']}"
-                    )
-                    print(
-                        f"   Speech time: {timeline_data['summary']['total_speech_time']}"
-                    )
-                    print(
-                        f"   Conversation time: {timeline_data['summary']['total_conversation_time']}"
-                    )
-                    print()
-
-                # Exit early if only analyzing speakers
-                if args.speaker_analysis_only:
-                    print("Speaker analysis completed. Exiting without processing.")
-                    return 0
-
-                if voice_segments is None:
-                    print(f"Detecting voice segments in video: {input_path}")
-                    voice_segments = detect_voice_segments(
-                        temp_audio_path,
-                        model,
-                        args.min_duration_on,
-                        args.min_duration_off,
-                    )
-
-                print(f"Found {len(voice_segments)} voice segments")
-
-                print("Processing video to remove voice segments...")
-                process_video_with_ffmpeg(input_path, output_path, voice_segments)
-
-                print(
-                    f"✓ Successfully created video with zeroed voice segments: {output_path}"
-                )
-                if timeline_data:
-                    print(f"✓ Timeline data saved to: {timeline_path}")
-
-            finally:
-                # Clean up temporary audio file
-                if os.path.exists(temp_audio_path):
-                    os.unlink(temp_audio_path)
-
-        # Handle audio files
-        else:
-            # Perform speaker analysis if requested
-            if args.analyze_speakers or args.speaker_analysis_only:
-                print(f"\n🔍 Analyzing speakers in audio: {input_path}")
-
-                if args.detailed_analysis:
-                    speaker_analysis = analyze_speaker_segments_direct(
-                        str(input_path), model
-                    )
-                    print("📊 Detailed Speaker Analysis Results:")
-                    print(
-                        f"   Multiple speakers detected: {'✓ YES' if speaker_analysis['has_multiple_speakers'] else '✗ NO'}"
-                    )
-                    print(
-                        f"   Maximum speakers detected: {speaker_analysis['max_speakers_detected']}"
-                    )
-                    print(
-                        f"   Confidence score: {speaker_analysis['confidence_score']:.2f}"
-                    )
-                    print(
-                        f"   Multi-speaker chunks: {speaker_analysis['multi_speaker_chunks']}/{speaker_analysis['total_chunks']}"
-                    )
-                    if speaker_analysis["speaker_segments"]:
-                        print(
-                            f"   Multi-speaker segments: {len(speaker_analysis['speaker_segments'])} segments"
-                        )
-                else:
-                    speaker_analysis = detect_multiple_speakers(
-                        str(input_path),
-                        model,
-                        args.min_duration_on,
-                        args.min_duration_off,
-                    )
-                    print("📊 Speaker Analysis Results:")
-                    print(
-                        f"   Multiple speakers detected: {'✓ YES' if speaker_analysis['has_multiple_speakers'] else '✗ NO'}"
-                    )
-                    print(
-                        f"   Total speech duration: {speaker_analysis['total_speech_duration']:.2f} seconds"
-                    )
-                    print(
-                        f"   Overlapped speech duration: {speaker_analysis['overlapped_speech_duration']:.2f} seconds"
-                    )
-                    print(
-                        f"   Overlap percentage: {speaker_analysis['overlap_percentage']:.1f}%"
-                    )
-                    if speaker_analysis["overlapped_speech_segments"]:
-                        print(
-                            f"   Overlapped speech segments: {len(speaker_analysis['overlapped_speech_segments'])} segments"
-                        )
-
-                print()  # Add blank line for readability
-
-            # Generate timeline if requested
-            timeline_data = None
-            voice_segments = None
-            if args.generate_timeline:
-                print("🕒 Generating speaker timeline...")
-                timeline_data = generate_speaker_timeline(
-                    str(input_path), model, args.min_duration_on, args.min_duration_off
-                )
-
-                # Extract voice segments from the detailed timeline
-                if timeline_data and "internal_timeline" in timeline_data:
-                    voice_segments = [
-                        (s["start_seconds"], s["end_seconds"])
-                        for s in timeline_data["internal_timeline"]
-                        if s["type"] == "speech"
-                    ]
-
-                # Determine timeline output path
-                if args.timeline_output:
-                    timeline_path = Path(args.timeline_output)
-                else:
-                    timeline_path = (
-                        input_path.parent / f"{input_path.stem}_timeline.json"
-                    )
-
-                # Save timeline to JSON
-                with open(timeline_path, "w") as f:
-                    json_output = {
-                        "timeline": timeline_data["timeline"],
-                        "summary": timeline_data["summary"],
-                    }
-                    json.dump(json_output, f, indent=2)
-
-                print(f"📄 Timeline saved to: {timeline_path}")
-                print(f"   Total segments: {timeline_data['summary']['num_segments']}")
-                print(
-                    f"   Speech time: {timeline_data['summary']['total_speech_time']}"
-                )
-                print(
-                    f"   Conversation time: {timeline_data['summary']['total_conversation_time']}"
-                )
-                print()
-
-            # Exit early if only analyzing speakers
-            if args.speaker_analysis_only:
-                print("Speaker analysis completed. Exiting without processing.")
-                return 0
-
+            # If not generating a timeline, detect voice segments directly
             if voice_segments is None:
-                print(f"Detecting voice segments in audio: {input_path}")
+                print("🗣️ Detecting voice segments...")
                 voice_segments = detect_voice_segments(
-                    str(input_path), model, args.min_duration_on, args.min_duration_off
+                    audio_for_analysis,
+                    model,
+                    args.min_duration_on,
+                    args.min_duration_off,
                 )
 
-            print(f"Found {len(voice_segments)} voice segments")
+            # --- Processing ---
+            if not args.speaker_analysis_only:
+                if not voice_segments:
+                    print(f"No voice segments detected in {input_path.name}. File not modified.")
+                else:
+                    if is_video:
+                        print(f"🎬 Processing video: {input_path.name}...")
+                        process_video_with_ffmpeg(input_path, output_path, voice_segments)
+                        print(f"✓ Video processing complete: {output_path}")
+                    else:
+                        print(f"🎵 Processing audio: {input_path.name}...")
+                        process_audio_with_ffmpeg(input_path, output_path, voice_segments)
+                        print(f"✓ Audio processing complete: {output_path}")
 
-            print("Processing audio to remove voice segments...")
-            process_audio_with_ffmpeg(input_path, output_path, voice_segments)
+        finally:
+            # Clean up temporary audio file if it was created
+            if temp_audio_path and os.path.exists(temp_audio_path):
+                os.remove(temp_audio_path)
 
-            print(
-                f"✓ Successfully created audio with zeroed voice segments: {output_path}"
-            )
-            if timeline_data:
-                print(f"✓ Timeline data saved to: {timeline_path}")
+        print("✨ Done!")
+        return 0
 
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"An error occurred while processing {args.input_path}: {e}", file=sys.stderr)
         return 1
 
+
+def process_directory(args):
+    """Process all media files in a directory."""
+    import sys
+
+    input_dir = Path(args.input_path)
+    if not input_dir.is_dir():
+        print(f"Error: Input path {input_dir} is not a directory.", file=sys.stderr)
+        return 1
+
+    output_dir = Path(args.output) if args.output else input_dir
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    timeline_dir = Path(args.timeline_output) if args.timeline_output else output_dir
+    timeline_dir.mkdir(parents=True, exist_ok=True)
+
+    media_files = find_media_files(input_dir)
+    if not media_files:
+        print(f"No media files found in {input_dir}")
+        return 0
+
+    print(f"Found {len(media_files)} media files in {input_dir}. Starting batch processing...")
+
+    for media_file in media_files:
+        print("-" * 50)
+        file_args = argparse.Namespace(**vars(args))
+        file_args.input_path = str(media_file)
+
+        if args.output:
+            file_args.output = str(output_dir / f"{media_file.stem}_processed{media_file.suffix}")
+        else:
+            file_args.output = None  # Let process_single_file handle default naming
+
+        if args.timeline_output:
+            file_args.timeline_output = str(timeline_dir / f"{media_file.stem}_timeline.json")
+        elif args.generate_timeline:
+            file_args.timeline_output = str(output_dir / f"{media_file.stem}_timeline.json")
+
+        process_single_file(file_args)
+
+    print("-" * 50)
+    print("✓ Batch processing complete.")
     return 0
+
+
+def main():
+    """Main function to process audio/video file and zero out voice segments."""
+    import sys
+
+    parser = argparse.ArgumentParser(
+        description="Remove voice segments from audio or video files using pyannote.audio and ffmpeg"
+    )
+
+    subparsers = parser.add_subparsers(dest="mode", help="Processing mode")
+
+    # --- Process command ---
+    process_parser = subparsers.add_parser("process", help="Process a single file or a directory")
+    add_process_arguments(process_parser)
+
+    # --- Apply-edits command ---
+    edit_parser = subparsers.add_parser("apply-edits", help="Apply timeline-based edits to multiple files")
+    edit_parser.add_argument("directory", help="Directory containing timeline JSON files and media files")
+    edit_parser.add_argument(
+        "--output-suffix",
+        default="_edited",
+        help="Suffix for output files (default: _edited)",
+    )
+
+    # --- Backward compatibility: if no subcommand, assume 'process' ---
+    args_list = sys.argv[1:]
+    if not args_list or args_list[0] not in ["process", "apply-edits"]:
+        # If input looks like a file/dir path, prepend 'process'
+        if args_list and (Path(args_list[0]).exists() or Path(args_list[0]).is_dir()):
+            args_list.insert(0, "process")
+        # Handle --help for backward compatibility
+        elif not args_list or "-h" in args_list or "--help" in args_list:
+            # Show top-level help
+            pass
+        else:
+            # default to process
+            args_list.insert(0, "process")
+
+    args = parser.parse_args(args_list)
+
+    if args.mode == "process":
+        input_path = Path(args.input_path)
+        if input_path.is_dir():
+            return process_directory(args)
+        else:
+            return process_single_file(args)
+
+    elif args.mode == "apply-edits":
+        directory = Path(args.directory)
+        if not directory.exists() or not directory.is_dir():
+            print(f"Error: Directory not found: {directory}", file=sys.stderr)
+            return 1
+        return apply_timeline_edits(directory, args.output_suffix)
+
+    else:
+        parser.print_help()
+        return 1
 
 
 if __name__ == "__main__":

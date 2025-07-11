@@ -78,7 +78,7 @@ echo "HUGGINGFACE_ACCESS_TOKEN=your_token_here" > .env
 Remove voice segments from an audio file:
 
 ```bash
-uv run main.py input_audio.mp3
+uv run main.py process input_audio.mp3
 ```
 
 This will create `input_audio_no_conversations.mp3` with voice segments zeroed out.
@@ -86,18 +86,40 @@ This will create `input_audio_no_conversations.mp3` with voice segments zeroed o
 Remove voice segments from a video file:
 
 ```bash
-uv run main.py input_video.mp4
+uv run main.py process input_video.mp4
 ```
 
 This will create `input_video_no_conversations.mp4` with voice segments zeroed out while preserving the original video quality.
+
+**Note:** For backward compatibility, the old format without `process` still works:
+
+```bash
+uv run main.py input_audio.mp3
+uv run main.py input_video.mp4
+```
 
 ### Custom Output Path
 
 Specify a custom output file:
 
 ```bash
-uv run main.py input_audio.mp3 -o output_audio.mp3
-uv run main.py input_video.mp4 -o output_video.mp4
+uv run main.py process input_audio.mp3 -o output_audio.mp3
+uv run main.py process input_video.mp4 -o output_video.mp4
+```
+
+### Batch Processing a Directory
+
+Process all media files in a directory:
+
+```bash
+uv run main.py process /path/to/your/media
+```
+
+This will process all supported audio and video files in that directory. You can specify an output directory with `-o`.
+
+To generate timelines for all files in a directory:
+```bash
+uv run main.py process /path/to/your/media --generate-timeline --speaker-analysis-only -o /path/to/output_dir
 ```
 
 ### Speaker Analysis
@@ -106,13 +128,13 @@ Analyze if multiple speakers are present in your audio/video:
 
 ```bash
 # Analyze speakers and then process the file
-uv run main.py input_audio.mp3 --analyze-speakers
+uv run main.py process input_audio.mp3 --analyze-speakers
 
 # Only analyze speakers without processing
-uv run main.py input_audio.mp3 --speaker-analysis-only
+uv run main.py process input_audio.mp3 --speaker-analysis-only
 
 # Use detailed analysis (more accurate but slower)
-uv run main.py input_audio.mp3 --speaker-analysis-only --detailed-analysis
+uv run main.py process input_audio.mp3 --speaker-analysis-only --detailed-analysis
 ```
 
 ### Timeline Generation
@@ -121,16 +143,16 @@ Generate detailed JSON timeline with speaker information:
 
 ```bash
 # Generate timeline and process the file
-uv run main.py input_audio.mp3 --generate-timeline
+uv run main.py process input_audio.mp3 --generate-timeline
 
 # Only generate timeline without processing
-uv run main.py input_audio.mp3 --speaker-analysis-only --generate-timeline
+uv run main.py process input_audio.mp3 --speaker-analysis-only --generate-timeline
 
 # Specify custom timeline output path
-uv run main.py input_audio.mp3 --generate-timeline --timeline-output my_timeline.json
+uv run main.py process input_audio.mp3 --generate-timeline --timeline-output my_timeline.json
 
 # Combine speaker analysis with timeline generation
-uv run main.py input_audio.mp3 --analyze-speakers --generate-timeline
+uv run main.py process input_audio.mp3 --analyze-speakers --generate-timeline
 ```
 
 ### Advanced Options
@@ -138,13 +160,13 @@ uv run main.py input_audio.mp3 --analyze-speakers --generate-timeline
 Fine-tune the voice detection parameters:
 
 ```bash
-uv run main.py input_audio.mp3 \
+uv run main.py process input_audio.mp3 \
   --min-duration-on 0.2 \
   --min-duration-off 0.1 \
   --analyze-speakers \
   -o processed_audio.mp3
 
-uv run main.py input_video.mp4 \
+uv run main.py process input_video.mp4 \
   --min-duration-on 0.2 \
   --min-duration-off 0.1 \
   --analyze-speakers \
@@ -153,23 +175,39 @@ uv run main.py input_video.mp4 \
 
 ### Parameters
 
-- `input_file`: Path to the input audio or video file (required)
-- `-o, --output`: Custom output file path (optional)
+#### Process Mode (File or Directory Processing)
+
+- `input_path`: Path to the input audio/video file or directory (required)
+- `-o, --output`: Custom output file or directory path (optional)
 - `--min-duration-on`: Minimum duration for speech regions in seconds (default: 0.1)
 - `--min-duration-off`: Minimum duration for non-speech regions in seconds (default: 0.1)
 - `--analyze-speakers`: Analyze and report if multiple speakers are detected
 - `--speaker-analysis-only`: Only analyze speakers without processing the file
 - `--detailed-analysis`: Use detailed direct model analysis for speaker detection (more accurate but slower)
 - `--generate-timeline`: Generate JSON timeline with speaker analysis
-- `--timeline-output`: Path for timeline JSON file (default: input_filename_timeline.json)
+- `--timeline-output`: Path for timeline JSON file or directory (default: input_filename_timeline.json)
+
+#### Apply-Edits Mode (Timeline-Based Batch Processing)
+
+- `directory`: Directory containing timeline JSON files and media files (required)
+- `--output-suffix`: Suffix for output files (default: "_edited")
 
 ### Help
 
 Get full usage information:
 
 ```bash
+# General help
 uv run main.py --help
+
+# Help for the process command
+uv run main.py process --help
+
+# Help for timeline-based batch editing
+uv run main.py apply-edits --help
 ```
+
+**Note:** The `process` subcommand is available but optional for backward compatibility.
 
 ## How It Works
 
@@ -287,6 +325,131 @@ When using `--generate-timeline`, the tool generates a JSON file with detailed s
 - **speaking**: Single person speaking
 - **conversation**: Multiple people speaking (indicates dialogue/conversation)
 
+## Custom Timeline Editing
+
+The main script now includes built-in functionality to apply custom edits to media files based on timeline JSON files. This is useful when you want to:
+
+- Selectively zero out specific conversation segments
+- Process multiple files with existing timeline analyses
+- Apply custom edits based on manually reviewed or modified timelines
+
+**Note:** Timeline editing functionality is now fully integrated into the main script for a streamlined experience.
+
+### How It Works
+
+The apply-edits mode processes timeline JSON files (generated by the main script with `--generate-timeline`) and automatically zeros out segments labeled as "conversation" (multiple speakers). This allows for batch processing and selective editing based on the timeline analysis.
+
+### Basic Usage
+
+Process all timeline files in a directory:
+
+```bash
+uv run main.py apply-edits /path/to/directory
+```
+
+This will:
+1. Find all `*_timeline.json` files in the directory
+2. For each timeline file, find the corresponding media file
+3. Extract segments labeled as "conversation" 
+4. Create edited versions with those segments zeroed out
+5. Save output files with `_edited` suffix
+
+### Custom Output Suffix
+
+Specify a custom suffix for output files:
+
+```bash
+uv run main.py apply-edits /path/to/directory --output-suffix "_no_conversations"
+```
+
+### Workflow Example
+
+1. **Generate timeline files for analysis:**
+   You can generate timelines for all media files in a directory in one go:
+   ```bash
+   uv run main.py process /path/to/media --speaker-analysis-only --generate-timeline --timeline-output /path/to/media
+   ```
+   
+   Alternatively, you can process files individually:
+   ```bash
+   uv run main.py process video1.mp4 --speaker-analysis-only --generate-timeline
+   uv run main.py process video2.mp4 --speaker-analysis-only --generate-timeline
+   uv run main.py process audio1.mp3 --speaker-analysis-only --generate-timeline
+   ```
+
+2. **Review the generated timeline files** (optional):
+   - `video1_timeline.json`
+   - `video2_timeline.json` 
+   - `audio1_timeline.json`
+
+3. **Apply edits to all files:**
+   ```bash
+   uv run main.py apply-edits ./
+   ```
+
+4. **Output files created:**
+   - `video1_edited.mp4`
+   - `video2_edited.mp4`
+   - `audio1_edited.mp3`
+
+### Directory Structure Requirements
+
+The script expects timeline files and their corresponding media files to be in the same directory:
+
+```
+my_media/
+├── video1.mp4
+├── video1_timeline.json
+├── video2.mp4
+├── video2_timeline.json
+├── audio1.mp3
+└── audio1_timeline.json
+```
+
+### What Gets Zeroed Out
+
+The script automatically identifies and zeros out segments where:
+- **Label** = "conversation" (multiple speakers detected)
+- **Type** = "speech" with **speakers** > 1
+
+Segments labeled as "speaking" (single speaker) and "silence" are preserved.
+
+### Custom Timeline Editing
+
+You can manually edit the timeline JSON files before running the apply-edits command:
+
+1. **Change labels**: Modify segment labels to control what gets zeroed out
+   - Change "speaking" to "conversation" to zero out single-speaker segments
+   - Change "conversation" to "speaking" to preserve multi-speaker segments
+
+2. **Example manual edit:**
+   ```json
+   {
+     "start": "0:02.500",
+     "end": "0:08.300", 
+     "duration": "0:05.800",
+     "type": "speech",
+     "speakers": 1,
+     "label": "conversation"  // Changed from "speaking" to zero this out
+   }
+   ```
+
+### Error Handling
+
+The apply-edits mode will:
+- Skip timeline files without corresponding media files
+- Report missing files and processing errors
+- Continue processing remaining files if some fail
+- Show progress and results for each file
+
+### Help
+
+Get full usage information:
+
+```bash
+uv run main.py apply-edits --help
+```
+
 ## Troubleshooting
 
 ### Common Issues
@@ -314,7 +477,7 @@ When using `--generate-timeline`, the tool generates a JSON file with detailed s
 
 ```
 audio-processing/
-├── main.py          # Main processing script
+├── main.py              # Main processing script with timeline editing
 ├── pyproject.toml       # Project dependencies and metadata
 ├── .env                 # Environment variables (create this)
 ├── .python-version      # Python version specification
