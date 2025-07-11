@@ -234,11 +234,13 @@ def analyze_speaker_segments_direct(audio_path, model, chunk_duration=10.0):
                     if num_speakers > 1:
                         frame_start = chunk_start_time + frame_idx * frame_duration
                         frame_end = frame_start + frame_duration
-                        speaker_segments.append({
-                            "start": frame_start,
-                            "end": frame_end,
-                            "num_speakers": num_speakers.item(),
-                        })
+                        speaker_segments.append(
+                            {
+                                "start": frame_start,
+                                "end": frame_end,
+                                "num_speakers": num_speakers.item(),
+                            }
+                        )
 
         # Calculate confidence score
         confidence_score = (multi_speaker_chunks / total_chunks) if total_chunks > 0 else 0
@@ -267,170 +269,7 @@ def analyze_speaker_segments_direct(audio_path, model, chunk_duration=10.0):
         }
 
 
-def create_ffmpeg_filter(voice_segments, audio_duration):
-    """
-    Create ffmpeg filter to zero out voice segments.
-
-    Args:
-        voice_segments: List of (start_time, end_time) tuples
-        audio_duration: Total duration of audio in seconds
-
-    Returns:
-        ffmpeg filter string
-    """
-    if not voice_segments:
-        return None
-
-    # Create volume filter to mute voice segments
-    filter_parts = []
-    for start, end in voice_segments:
-        # Use volume filter to set volume to 0 for voice segments
-        filter_parts.append(f"volume=0:enable='between(t,{start},{end})'")
-
-    # Chain all volume filters
-    return ",".join(filter_parts)
-
-
-def process_audio_with_ffmpeg(input_path, output_path, voice_segments):
-    """
-    Process audio file with ffmpeg to zero out voice segments.
-
-    Args:
-        input_path: Path to input audio file
-        output_path: Path for output audio file
-        voice_segments: List of (start_time, end_time) tuples for voice segments
-    """
-    if not voice_segments:
-        print("No voice segments detected. Copying original file.")
-        subprocess.run(
-            ["ffmpeg", "-i", str(input_path), "-c", "copy", str(output_path), "-y"],
-            check=True,
-        )
-        return
-
-    # Get audio duration using ffprobe
-    duration_cmd = [
-        "ffprobe",
-        "-v",
-        "quiet",
-        "-show_entries",
-        "format=duration",
-        "-of",
-        "csv=p=0",
-        str(input_path),
-    ]
-    duration_result = subprocess.run(duration_cmd, capture_output=True, text=True, check=True, encoding="utf-8")
-    audio_duration = float(duration_result.stdout.strip())
-
-    # Create ffmpeg filter
-    volume_filter = create_ffmpeg_filter(voice_segments, audio_duration)
-
-    # Build ffmpeg command
-    ffmpeg_cmd = [
-        "ffmpeg",
-        "-i",
-        str(input_path),
-        "-af",
-        volume_filter,
-        "-c:a",
-        "libmp3lame",  # Use MP3 codec for output
-        "-b:a",
-        "192k",  # Set bitrate
-        str(output_path),
-        "-y",
-    ]
-
-    print(f"Processing audio with {len(voice_segments)} voice segments to zero out...")
-    print(f"Voice segments: {voice_segments}")
-
-    # Run ffmpeg
-    subprocess.run(ffmpeg_cmd, check=True)
-
-
-def is_video_file(file_path):
-    """Check if the file is a video file based on its extension."""
-    return Path(file_path).suffix.lower() in VIDEO_EXTENSIONS
-
-
-def is_audio_file(file_path):
-    """Check if the file is an audio file based on its extension."""
-    return Path(file_path).suffix.lower() in AUDIO_EXTENSIONS
-
-
-def extract_audio_from_video(video_path, audio_path):
-    """
-    Extract audio from video file using ffmpeg.
-
-    Args:
-        video_path: Path to input video file
-        audio_path: Path for extracted audio file
-    """
-    print(f"Extracting audio from video: {video_path}")
-
-    ffmpeg_cmd = [
-        "ffmpeg",
-        "-i",
-        str(video_path),
-        "-vn",  # No video
-        "-acodec",
-        "pcm_s16le",  # Use uncompressed audio for better processing
-        "-ar",
-        "16000",  # Sample rate suitable for pyannote
-        "-ac",
-        "1",  # Mono audio
-        str(audio_path),
-        "-y",
-    ]
-
-    subprocess.run(ffmpeg_cmd, check=True)
-    print(f"Audio extracted to: {audio_path}")
-
-
-def process_video_with_ffmpeg(input_path, output_path, voice_segments):
-    """
-    Process video file with ffmpeg to zero out voice segments in audio track.
-
-    Args:
-        input_path: Path to input video file
-        output_path: Path for output video file
-        voice_segments: List of (start_time, end_time) tuples for voice segments
-    """
-    if not voice_segments:
-        print("No voice segments detected. Copying original file.")
-        subprocess.run(
-            ["ffmpeg", "-i", str(input_path), "-c", "copy", str(output_path), "-y"],
-            check=True,
-        )
-        return
-
-    # Create ffmpeg filter for audio
-    volume_filter = create_ffmpeg_filter(voice_segments, None)  # Duration not needed for video processing
-
-    # Build ffmpeg command for video processing
-    ffmpeg_cmd = [
-        "ffmpeg",
-        "-i",
-        str(input_path),
-        "-c:v",
-        "copy",  # Copy video stream without re-encoding
-        "-af",
-        volume_filter,  # Apply audio filter
-        "-c:a",
-        "aac",  # Use AAC codec for audio
-        "-b:a",
-        "192k",  # Set audio bitrate
-        str(output_path),
-        "-y",
-    ]
-
-    print(f"Processing video with {len(voice_segments)} voice segments to zero out...")
-    print(f"Voice segments: {voice_segments}")
-
-    # Run ffmpeg
-    subprocess.run(ffmpeg_cmd, check=True)
-
-
-def generate_speaker_timeline(audio_path, model, min_duration_on=0.1, min_duration_off=0.1, frame_duration=0.1):
+def generate_speaker_timeline(audio_path, model, min_duration_on=0.1, min_duration_off=0.1):
     """
     Generate a detailed timeline of speaker activity for JSON output.
 
@@ -439,7 +278,6 @@ def generate_speaker_timeline(audio_path, model, min_duration_on=0.1, min_durati
         model: Pyannote segmentation model
         min_duration_on: Minimum duration for speech regions (seconds)
         min_duration_off: Minimum duration for non-speech regions (seconds)
-        frame_duration: Duration of each analysis frame (seconds)
 
     Returns:
         dict: Contains timeline analysis with keys:
@@ -528,11 +366,13 @@ def generate_speaker_timeline(audio_path, model, min_duration_on=0.1, min_durati
             for frame_idx, num_speakers in enumerate(active_speakers_per_frame):
                 frame_start = chunk_start_time + (frame_idx * chunk_duration / frames_per_chunk)
                 frame_end = min(frame_start + (chunk_duration / frames_per_chunk), total_duration)
-                speaker_counts_timeline.append({
-                    "start": frame_start,
-                    "end": frame_end,
-                    "speaker_count": num_speakers.item(),
-                })
+                speaker_counts_timeline.append(
+                    {
+                        "start": frame_start,
+                        "end": frame_end,
+                        "speaker_count": num_speakers.item(),
+                    }
+                )
 
         # Generate timeline segments
         timeline = []
@@ -587,27 +427,33 @@ def generate_speaker_timeline(audio_path, model, min_duration_on=0.1, min_durati
             }
 
             if not voice_active:
-                base_segment.update({
-                    "type": "silence",
-                    "speakers": 0,
-                    "label": "silence",
-                })
+                base_segment.update(
+                    {
+                        "type": "silence",
+                        "speakers": 0,
+                        "label": "silence",
+                    }
+                )
                 return base_segment
 
             speaker_count = max(get_speaker_count_at_time(start), get_speaker_count_at_time(end))
 
             if overlapped or speaker_count > 1:
-                base_segment.update({
-                    "type": "speech",
-                    "speakers": max(speaker_count, 2),
-                    "label": "conversation",
-                })
+                base_segment.update(
+                    {
+                        "type": "speech",
+                        "speakers": max(speaker_count, 2),
+                        "label": "conversation",
+                    }
+                )
             else:
-                base_segment.update({
-                    "type": "speech",
-                    "speakers": max(speaker_count, 1),
-                    "label": "speaking",
-                })
+                base_segment.update(
+                    {
+                        "type": "speech",
+                        "speakers": max(speaker_count, 1),
+                        "label": "speaking",
+                    }
+                )
             return base_segment
 
         # Process events to create timeline
@@ -766,18 +612,248 @@ def mmss_to_seconds(mmss_str):
     return minutes * 60 + seconds
 
 
-def extract_conversation_segments(timeline_data):
-    """Extract conversation segments that should be zeroed out."""
-    segments = []
+# Effect configuration for different labels
+EFFECT_CONFIGS = {
+    "speaking": {"mute_audio": False, "black_video": False},
+    "conversation": {"mute_audio": False, "black_video": False},
+    "silence": {"mute_audio": False, "black_video": False},
+    "black": {"mute_audio": True, "black_video": True},
+    "mute": {"mute_audio": True, "black_video": False},
+    "hide": {"mute_audio": True, "black_video": True},
+}
+
+
+def extract_segments_by_effects(timeline_data, target_effects=None):
+    """
+    Extract segments that should have specific effects applied based on their labels.
+
+    Args:
+        timeline_data: Timeline data with segments
+        target_effects: Dict specifying which effects to extract for, e.g.:
+                       {"mute_audio": True, "black_video": False} - extract segments to mute
+                       {"mute_audio": True, "black_video": True} - extract segments to mute AND black
+                       If None, extracts all segments with any effects
+
+    Returns:
+        Dict with keys for different effect combinations:
+        {
+            "mute_only": [(start, end), ...],    # Segments to mute audio only
+            "black_only": [(start, end), ...],   # Segments to black video only
+            "mute_and_black": [(start, end), ...] # Segments to both mute and black
+        }
+    """
+    segments = {"mute_only": [], "black_only": [], "mute_and_black": []}
 
     for segment in timeline_data["timeline"]:
-        # Zero out segments labeled as 'conversation' (multiple speakers)
-        if segment.get("label") == "conversation":
-            start_seconds = mmss_to_seconds(segment["start"])
-            end_seconds = mmss_to_seconds(segment["end"])
-            segments.append((start_seconds, end_seconds))
+        label = segment.get("label", "")
+
+        # Get effect configuration for this label
+        effects = EFFECT_CONFIGS.get(label, {"mute_audio": False, "black_video": False})
+
+        # Skip if no effects should be applied
+        if not effects["mute_audio"] and not effects["black_video"]:
+            continue
+
+        # Skip if target_effects specified and this segment doesn't match
+        if target_effects is not None:
+            if effects["mute_audio"] != target_effects.get("mute_audio", False) or effects[
+                "black_video"
+            ] != target_effects.get("black_video", False):
+                continue
+
+        start_seconds = mmss_to_seconds(segment["start"])
+        end_seconds = mmss_to_seconds(segment["end"])
+
+        # Categorize based on effect combination
+        if effects["mute_audio"] and effects["black_video"]:
+            segments["mute_and_black"].append((start_seconds, end_seconds))
+        elif effects["mute_audio"]:
+            segments["mute_only"].append((start_seconds, end_seconds))
+        elif effects["black_video"]:
+            segments["black_only"].append((start_seconds, end_seconds))
 
     return segments
+
+
+def create_audio_filter(mute_segments):
+    """
+    Create ffmpeg audio filter to mute specific segments.
+
+    Args:
+        mute_segments: List of (start_time, end_time) tuples to mute
+
+    Returns:
+        ffmpeg audio filter string or None if no segments
+    """
+    if not mute_segments:
+        return None
+
+    filter_parts = []
+    for start, end in mute_segments:
+        filter_parts.append(f"volume=0:enable='between(t,{start},{end})'")
+
+    return ",".join(filter_parts)
+
+
+def create_video_filter(black_segments):
+    """
+    Create ffmpeg video filter to black out specific segments.
+
+    Args:
+        black_segments: List of (start_time, end_time) tuples to black out
+
+    Returns:
+        ffmpeg video filter string or None if no segments
+    """
+    if not black_segments:
+        return None
+
+    filter_parts = []
+    for start, end in black_segments:
+        # Use drawbox filter to draw a black box over the entire video
+        filter_parts.append(f"drawbox=x=0:y=0:w=iw:h=ih:color=black:t=fill:enable='between(t,{start},{end})'")
+
+    return ",".join(filter_parts)
+
+
+def process_media_with_effects(input_path, output_path, effect_segments):
+    """
+    Process media file with flexible effects (audio muting, video blacking, or both).
+
+    Args:
+        input_path: Path to input media file
+        output_path: Path for output media file
+        effect_segments: Dict with effect segments from extract_segments_by_effects()
+    """
+    # Combine all segments that need effects
+    all_mute_segments = effect_segments["mute_only"] + effect_segments["mute_and_black"]
+    all_black_segments = effect_segments["black_only"] + effect_segments["mute_and_black"]
+
+    # Check if any effects need to be applied
+    if not all_mute_segments and not all_black_segments:
+        print("No effects to apply. Copying original file.")
+        subprocess.run(
+            ["ffmpeg", "-i", str(input_path), "-c", "copy", str(output_path), "-y"],
+            check=True,
+        )
+        return
+
+    # Create filters
+    audio_filter = create_audio_filter(all_mute_segments)
+    video_filter = create_video_filter(all_black_segments)
+
+    # Build ffmpeg command
+    ffmpeg_cmd = ["ffmpeg", "-i", str(input_path)]
+
+    # Add video filter if needed
+    if video_filter:
+        ffmpeg_cmd.extend(["-vf", video_filter])
+        ffmpeg_cmd.extend(["-c:v", "libx264", "-preset", "fast"])  # Re-encode video when filtering
+    else:
+        ffmpeg_cmd.extend(["-c:v", "copy"])  # Copy video stream if no video effects
+
+    # Add audio filter if needed
+    if audio_filter:
+        ffmpeg_cmd.extend(["-af", audio_filter])
+        ffmpeg_cmd.extend(["-c:a", "aac", "-b:a", "192k"])  # Re-encode audio when filtering
+    else:
+        ffmpeg_cmd.extend(["-c:a", "copy"])  # Copy audio stream if no audio effects
+
+    ffmpeg_cmd.extend([str(output_path), "-y"])
+
+    # Print processing info
+    effects_applied = []
+    if all_mute_segments:
+        effects_applied.append(f"mute {len(all_mute_segments)} segments")
+    if all_black_segments:
+        effects_applied.append(f"black {len(all_black_segments)} segments")
+
+    print(f"Processing media with effects: {', '.join(effects_applied)}")
+    if all_mute_segments:
+        print(f"Mute segments: {all_mute_segments}")
+    if all_black_segments:
+        print(f"Black segments: {all_black_segments}")
+
+    # Run ffmpeg
+    subprocess.run(ffmpeg_cmd, check=True)
+
+
+def is_video_file(file_path):
+    """Check if the file is a video file based on its extension."""
+    return Path(file_path).suffix.lower() in VIDEO_EXTENSIONS
+
+
+def is_audio_file(file_path):
+    """Check if the file is an audio file based on its extension."""
+    return Path(file_path).suffix.lower() in AUDIO_EXTENSIONS
+
+
+def extract_audio_from_video(video_path, audio_path):
+    """
+    Extract audio from video file using ffmpeg.
+
+    Args:
+        video_path: Path to input video file
+        audio_path: Path for extracted audio file
+    """
+    print(f"Extracting audio from video: {video_path}")
+
+    ffmpeg_cmd = [
+        "ffmpeg",
+        "-i",
+        str(video_path),
+        "-vn",  # No video
+        "-acodec",
+        "pcm_s16le",  # Use uncompressed audio for better processing
+        "-ar",
+        "16000",  # Sample rate suitable for pyannote
+        "-ac",
+        "1",  # Mono audio
+        str(audio_path),
+        "-y",
+    ]
+
+    subprocess.run(ffmpeg_cmd, check=True)
+    print(f"Audio extracted to: {audio_path}")
+
+
+# Backward compatibility functions for old processing functions
+def process_audio_with_ffmpeg(input_path, output_path, voice_segments):
+    """
+    DEPRECATED: Use process_media_with_effects() instead.
+    Process audio file with ffmpeg to zero out voice segments.
+    """
+    if not voice_segments:
+        print("No voice segments detected. Copying original file.")
+        subprocess.run(
+            ["ffmpeg", "-i", str(input_path), "-c", "copy", str(output_path), "-y"],
+            check=True,
+        )
+        return
+
+    # Convert to effect segments format for new system
+    effect_segments = {"mute_only": voice_segments, "black_only": [], "mute_and_black": []}
+
+    process_media_with_effects(input_path, output_path, effect_segments)
+
+
+def process_video_with_ffmpeg(input_path, output_path, voice_segments):
+    """
+    DEPRECATED: Use process_media_with_effects() instead.
+    Process video file with ffmpeg to zero out voice segments in audio track.
+    """
+    if not voice_segments:
+        print("No voice segments detected. Copying original file.")
+        subprocess.run(
+            ["ffmpeg", "-i", str(input_path), "-c", "copy", str(output_path), "-y"],
+            check=True,
+        )
+        return
+
+    # Convert to effect segments format for new system
+    effect_segments = {"mute_only": voice_segments, "black_only": [], "mute_and_black": []}
+
+    process_media_with_effects(input_path, output_path, effect_segments)
 
 
 def find_timeline_files(directory):
@@ -812,8 +888,16 @@ def find_media_file_for_timeline(timeline_path):
     return None
 
 
-def apply_timeline_edits(directory, output_suffix="_edited"):
-    """Apply timeline edits to all media files in a directory based on their timeline JSON files."""
+def apply_timeline_edits(directory, output_suffix="_edited", effect_labels=None):
+    """
+    Apply timeline edits to all media files in a directory based on their timeline JSON files.
+
+    Args:
+        directory: Directory containing timeline JSON files and media files
+        output_suffix: Suffix for output files (default: "_edited")
+        effect_labels: List of labels to apply effects to. If None, uses labels with configured effects.
+                      For backward compatibility, ["speaking", "conversation"] will mute audio only.
+    """
     # Find all timeline files
     timeline_files = find_timeline_files(directory)
 
@@ -849,12 +933,34 @@ def apply_timeline_edits(directory, output_suffix="_edited"):
             print(f"✗ Error loading timeline {timeline_path.name}: {e}")
             continue
 
-        # Extract conversation segments to zero out
-        conversation_segments = extract_conversation_segments(timeline_data)
-        print(f"  Found {len(conversation_segments)} conversation segments to zero out")
+        # Handle backward compatibility - if effect_labels specified, override config temporarily
+        if effect_labels:
+            # Temporarily modify effect config for backward compatibility
+            original_configs = EFFECT_CONFIGS.copy()
+            for label in EFFECT_CONFIGS:
+                EFFECT_CONFIGS[label] = {"mute_audio": False, "black_video": False}
+            for label in effect_labels:
+                if label in EFFECT_CONFIGS:
+                    EFFECT_CONFIGS[label] = {"mute_audio": True, "black_video": False}
 
-        if not conversation_segments:
-            print("  No conversation segments found, skipping...")
+        # Extract segments that need effects
+        effect_segments = extract_segments_by_effects(timeline_data)
+
+        # Count total segments with effects
+        total_effect_segments = (
+            len(effect_segments["mute_only"])
+            + len(effect_segments["black_only"])
+            + len(effect_segments["mute_and_black"])
+        )
+
+        print(f"  Found {total_effect_segments} segments with effects to apply")
+
+        if total_effect_segments == 0:
+            print("  No segments with effects found, skipping...")
+            if effect_labels:
+                # Restore original config
+                EFFECT_CONFIGS.clear()
+                EFFECT_CONFIGS.update(original_configs)
             continue
 
         # Create output path
@@ -862,20 +968,40 @@ def apply_timeline_edits(directory, output_suffix="_edited"):
 
         try:
             print("  Processing media file...")
-            if is_video_file(media_path):
-                process_video_with_ffmpeg(media_path, output_path, conversation_segments)
-            else:
-                process_audio_with_ffmpeg(media_path, output_path, conversation_segments)
-
+            process_media_with_effects(media_path, output_path, effect_segments)
             print(f"✓ Created edited file: {output_path.name}")
 
         except Exception as e:
             print(f"✗ Error processing {media_path.name}: {e}")
 
+        # Restore original config if modified for backward compatibility
+        if effect_labels:
+            EFFECT_CONFIGS.clear()
+            EFFECT_CONFIGS.update(original_configs)
+
         print()
 
     print("✓ All files processed!")
     return 0
+
+
+# Backward compatibility function
+def extract_conversation_segments(timeline_data):
+    """
+    Extract speech segments that should be zeroed out.
+    DEPRECATED: Use extract_segments_by_effects() instead.
+    Kept for backward compatibility.
+    """
+    segments = []
+
+    for segment in timeline_data["timeline"]:
+        # Zero out all speech segments (both 'speaking' and 'conversation')
+        if segment.get("label") in ["speaking", "conversation"]:
+            start_seconds = mmss_to_seconds(segment["start"])
+            end_seconds = mmss_to_seconds(segment["end"])
+            segments.append((start_seconds, end_seconds))
+
+    return segments
 
 
 def add_process_arguments(parser):
@@ -1162,6 +1288,12 @@ def main():
             default="_edited",
             help="Suffix for output files (default: _edited)",
         )
+        edit_parser.add_argument(
+            "--effect-labels",
+            nargs="+",
+            help="Labels to apply effects to (e.g., speaking conversation). "
+            "For backward compatibility, use 'speaking' and 'conversation' to mute audio only.",
+        )
 
         # --- Debug command ---
         debug_parser = subparsers.add_parser("debug-encoding", help="Debug file encoding issues")
@@ -1195,7 +1327,7 @@ def main():
             if not directory.exists() or not directory.is_dir():
                 print(f"Error: Directory not found: {directory}", file=sys.stderr)
                 return 1
-            return apply_timeline_edits(directory, args.output_suffix)
+            return apply_timeline_edits(directory, args.output_suffix, args.effect_labels)
 
         elif args.mode == "debug-encoding":
             file_path = Path(args.file_path)
