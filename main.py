@@ -15,17 +15,18 @@ import sys
 load_dotenv()
 
 # Ensure UTF-8 encoding on Windows
-if sys.platform.startswith('win'):
+if sys.platform.startswith("win"):
     # Set console encoding to UTF-8 for Windows
     try:
         # For Python 3.7+
-        sys.stdout.reconfigure(encoding='utf-8')
-        sys.stderr.reconfigure(encoding='utf-8')
+        sys.stdout.reconfigure(encoding="utf-8")
+        sys.stderr.reconfigure(encoding="utf-8")
     except AttributeError:
         # For older Python versions
         import codecs
-        sys.stdout = codecs.getwriter('utf-8')(sys.stdout.buffer)
-        sys.stderr = codecs.getwriter('utf-8')(sys.stderr.buffer)
+
+        sys.stdout = codecs.getwriter("utf-8")(sys.stdout.buffer)
+        sys.stderr = codecs.getwriter("utf-8")(sys.stderr.buffer)
 
 # Video file extensions
 VIDEO_EXTENSIONS = {".mp4", ".avi", ".mov", ".mkv", ".webm", ".flv", ".wmv", ".m4v"}
@@ -34,8 +35,8 @@ AUDIO_EXTENSIONS = {".mp3", ".wav", ".flac", ".aac", ".ogg", ".m4a"}
 
 def run_subprocess_with_encoding(*args, **kwargs):
     """Helper function to run subprocess with proper encoding on Windows."""
-    if sys.platform.startswith('win') and 'encoding' not in kwargs and kwargs.get('text') is True:
-        kwargs['encoding'] = 'utf-8'
+    if sys.platform.startswith("win") and "encoding" not in kwargs and kwargs.get("text") is True:
+        kwargs["encoding"] = "utf-8"
     return subprocess.run(*args, **kwargs)
 
 
@@ -699,10 +700,62 @@ def generate_speaker_timeline(audio_path, model, min_duration_on=0.1, min_durati
         }
 
 
+def detect_file_encoding(file_path):
+    """Debug function to detect file encoding and BOM."""
+    with open(file_path, "rb") as f:
+        first_bytes = f.read(10)
+
+    print(f"First 10 bytes of {file_path}: {first_bytes}")
+    print(f"Hex representation: {first_bytes.hex()}")
+
+    if first_bytes.startswith(b"\xff\xfe"):
+        print("Detected: UTF-16 LE BOM")
+        return "utf-16-le"
+    elif first_bytes.startswith(b"\xfe\xff"):
+        print("Detected: UTF-16 BE BOM")
+        return "utf-16-be"
+    elif first_bytes.startswith(b"\xef\xbb\xbf"):
+        print("Detected: UTF-8 BOM")
+        return "utf-8-sig"
+    else:
+        print("No BOM detected, assuming UTF-8")
+        return "utf-8"
+
+
 def load_timeline(timeline_path):
     """Load timeline from JSON file."""
-    with open(timeline_path, "r", encoding="utf-8") as f:
-        return json.load(f)
+    # Try multiple encodings to handle Windows encoding issues
+    encodings_to_try = ["utf-8", "utf-8-sig", "utf-16", "utf-16-le", "utf-16-be", "cp1252", "latin1"]
+
+    for encoding in encodings_to_try:
+        try:
+            with open(timeline_path, "r", encoding=encoding) as f:
+                return json.load(f)
+        except (UnicodeDecodeError, UnicodeError, json.JSONDecodeError):
+            continue
+
+    # If all encodings fail, try reading as binary and decoding manually
+    try:
+        with open(timeline_path, "rb") as f:
+            raw_data = f.read()
+
+            # Remove BOM if present
+            if raw_data.startswith(b"\xff\xfe"):
+                # UTF-16 LE BOM
+                text_data = raw_data[2:].decode("utf-16-le")
+            elif raw_data.startswith(b"\xfe\xff"):
+                # UTF-16 BE BOM
+                text_data = raw_data[2:].decode("utf-16-be")
+            elif raw_data.startswith(b"\xef\xbb\xbf"):
+                # UTF-8 BOM
+                text_data = raw_data[3:].decode("utf-8")
+            else:
+                # Try UTF-8 with error replacement
+                text_data = raw_data.decode("utf-8", errors="replace")
+
+            return json.loads(text_data)
+    except Exception as e:
+        raise ValueError(f"Could not decode timeline file {timeline_path}. Error: {e}")
 
 
 def mmss_to_seconds(mmss_str):
@@ -1110,9 +1163,13 @@ def main():
             help="Suffix for output files (default: _edited)",
         )
 
+        # --- Debug command ---
+        debug_parser = subparsers.add_parser("debug-encoding", help="Debug file encoding issues")
+        debug_parser.add_argument("file_path", help="Path to file to analyze encoding")
+
         # --- Backward compatibility: if no subcommand, assume 'process' ---
         args_list = sys.argv[1:]
-        if not args_list or args_list[0] not in ["process", "apply-edits"]:
+        if not args_list or args_list[0] not in ["process", "apply-edits", "debug-encoding"]:
             # If input looks like a file/dir path, prepend 'process'
             if args_list and (Path(args_list[0]).exists() or Path(args_list[0]).is_dir()):
                 args_list.insert(0, "process")
@@ -1139,6 +1196,15 @@ def main():
                 print(f"Error: Directory not found: {directory}", file=sys.stderr)
                 return 1
             return apply_timeline_edits(directory, args.output_suffix)
+
+        elif args.mode == "debug-encoding":
+            file_path = Path(args.file_path)
+            if not file_path.exists():
+                print(f"Error: File not found: {file_path}", file=sys.stderr)
+                return 1
+            detected_encoding = detect_file_encoding(file_path)
+            print(f"Suggested encoding: {detected_encoding}")
+            return 0
 
         else:
             parser.print_help()
