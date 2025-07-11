@@ -10,12 +10,33 @@ from dotenv import load_dotenv
 import tempfile
 import torch
 import json
+import sys
 
 load_dotenv()
+
+# Ensure UTF-8 encoding on Windows
+if sys.platform.startswith('win'):
+    # Set console encoding to UTF-8 for Windows
+    try:
+        # For Python 3.7+
+        sys.stdout.reconfigure(encoding='utf-8')
+        sys.stderr.reconfigure(encoding='utf-8')
+    except AttributeError:
+        # For older Python versions
+        import codecs
+        sys.stdout = codecs.getwriter('utf-8')(sys.stdout.buffer)
+        sys.stderr = codecs.getwriter('utf-8')(sys.stderr.buffer)
 
 # Video file extensions
 VIDEO_EXTENSIONS = {".mp4", ".avi", ".mov", ".mkv", ".webm", ".flv", ".wmv", ".m4v"}
 AUDIO_EXTENSIONS = {".mp3", ".wav", ".flac", ".aac", ".ogg", ".m4a"}
+
+
+def run_subprocess_with_encoding(*args, **kwargs):
+    """Helper function to run subprocess with proper encoding on Windows."""
+    if sys.platform.startswith('win') and 'encoding' not in kwargs and kwargs.get('text') is True:
+        kwargs['encoding'] = 'utf-8'
+    return subprocess.run(*args, **kwargs)
 
 
 def load_model():
@@ -297,7 +318,7 @@ def process_audio_with_ffmpeg(input_path, output_path, voice_segments):
         "csv=p=0",
         str(input_path),
     ]
-    duration_result = subprocess.run(duration_cmd, capture_output=True, text=True, check=True)
+    duration_result = subprocess.run(duration_cmd, capture_output=True, text=True, check=True, encoding="utf-8")
     audio_duration = float(duration_result.stdout.strip())
 
     # Create ffmpeg filter
@@ -680,7 +701,7 @@ def generate_speaker_timeline(audio_path, model, min_duration_on=0.1, min_durati
 
 def load_timeline(timeline_path):
     """Load timeline from JSON file."""
-    with open(timeline_path, "r") as f:
+    with open(timeline_path, "r", encoding="utf-8") as f:
         return json.load(f)
 
 
@@ -920,8 +941,8 @@ def _handle_speaker_and_timeline_analysis(args, input_path, model):
             timeline_output_path = timeline_output_path.parent / f"{original_input_path.stem}_timeline.json"
 
         # Save the timeline data
-        with open(timeline_output_path, "w") as f:
-            json.dump(timeline_data, f, indent=2)
+        with open(timeline_output_path, "w", encoding="utf-8") as f:
+            json.dump(timeline_data, f, indent=2, ensure_ascii=False)
         print(f"✓ Timeline saved to {timeline_output_path}")
 
         # Use timeline to extract conversation segments if not processing
@@ -1069,59 +1090,66 @@ def process_directory(args):
 
 def main():
     """Main function to process audio/video file and zero out voice segments."""
-    import sys
+    try:
+        parser = argparse.ArgumentParser(
+            description="Remove voice segments from audio or video files using pyannote.audio and ffmpeg"
+        )
 
-    parser = argparse.ArgumentParser(
-        description="Remove voice segments from audio or video files using pyannote.audio and ffmpeg"
-    )
+        subparsers = parser.add_subparsers(dest="mode", help="Processing mode")
 
-    subparsers = parser.add_subparsers(dest="mode", help="Processing mode")
+        # --- Process command ---
+        process_parser = subparsers.add_parser("process", help="Process a single file or a directory")
+        add_process_arguments(process_parser)
 
-    # --- Process command ---
-    process_parser = subparsers.add_parser("process", help="Process a single file or a directory")
-    add_process_arguments(process_parser)
+        # --- Apply-edits command ---
+        edit_parser = subparsers.add_parser("apply-edits", help="Apply timeline-based edits to multiple files")
+        edit_parser.add_argument("directory", help="Directory containing timeline JSON files and media files")
+        edit_parser.add_argument(
+            "--output-suffix",
+            default="_edited",
+            help="Suffix for output files (default: _edited)",
+        )
 
-    # --- Apply-edits command ---
-    edit_parser = subparsers.add_parser("apply-edits", help="Apply timeline-based edits to multiple files")
-    edit_parser.add_argument("directory", help="Directory containing timeline JSON files and media files")
-    edit_parser.add_argument(
-        "--output-suffix",
-        default="_edited",
-        help="Suffix for output files (default: _edited)",
-    )
+        # --- Backward compatibility: if no subcommand, assume 'process' ---
+        args_list = sys.argv[1:]
+        if not args_list or args_list[0] not in ["process", "apply-edits"]:
+            # If input looks like a file/dir path, prepend 'process'
+            if args_list and (Path(args_list[0]).exists() or Path(args_list[0]).is_dir()):
+                args_list.insert(0, "process")
+            # Handle --help for backward compatibility
+            elif not args_list or "-h" in args_list or "--help" in args_list:
+                # Show top-level help
+                pass
+            else:
+                # default to process
+                args_list.insert(0, "process")
 
-    # --- Backward compatibility: if no subcommand, assume 'process' ---
-    args_list = sys.argv[1:]
-    if not args_list or args_list[0] not in ["process", "apply-edits"]:
-        # If input looks like a file/dir path, prepend 'process'
-        if args_list and (Path(args_list[0]).exists() or Path(args_list[0]).is_dir()):
-            args_list.insert(0, "process")
-        # Handle --help for backward compatibility
-        elif not args_list or "-h" in args_list or "--help" in args_list:
-            # Show top-level help
-            pass
+        args = parser.parse_args(args_list)
+
+        if args.mode == "process":
+            input_path = Path(args.input_path)
+            if input_path.is_dir():
+                return process_directory(args)
+            else:
+                return process_single_file(args)
+
+        elif args.mode == "apply-edits":
+            directory = Path(args.directory)
+            if not directory.exists() or not directory.is_dir():
+                print(f"Error: Directory not found: {directory}", file=sys.stderr)
+                return 1
+            return apply_timeline_edits(directory, args.output_suffix)
+
         else:
-            # default to process
-            args_list.insert(0, "process")
-
-    args = parser.parse_args(args_list)
-
-    if args.mode == "process":
-        input_path = Path(args.input_path)
-        if input_path.is_dir():
-            return process_directory(args)
-        else:
-            return process_single_file(args)
-
-    elif args.mode == "apply-edits":
-        directory = Path(args.directory)
-        if not directory.exists() or not directory.is_dir():
-            print(f"Error: Directory not found: {directory}", file=sys.stderr)
+            parser.print_help()
             return 1
-        return apply_timeline_edits(directory, args.output_suffix)
 
-    else:
-        parser.print_help()
+    except UnicodeDecodeError as e:
+        print(f"Unicode encoding error: {e}", file=sys.stderr)
+        print("Try setting your system locale to UTF-8 or run with PYTHONIOENCODING=utf-8", file=sys.stderr)
+        return 1
+    except Exception as e:
+        print(f"An unexpected error occurred: {e}", file=sys.stderr)
         return 1
 
 
