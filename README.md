@@ -14,6 +14,17 @@ uv run main.py process video.mp4 --generate-timeline
 uv run main.py apply-edits ./directory
 ```
 
+### Time Range Effects (New!)
+
+```bash
+# Apply effects to specific time ranges (no timeline needed)
+uv run main.py apply-effects video.mp4 "1:30-2:45" "5:00-5:30" --effect black
+
+# Multiple ranges with different effects
+uv run main.py apply-effects video.mp4 "0:30-1:00" --effect mute
+uv run main.py apply-effects video.mp4 "2:00-3:00" --effect all
+```
+
 ### Custom Effects
 
 ```bash
@@ -55,16 +66,16 @@ uv run main.py process video.mp4 --generate-timeline
 
 ## Effect Configuration System
 
-The tool uses a flexible label-based effects system. You can configure different effects for different types of content:
+The tool uses a flexible label-based effects system. **By default, all speech segments (both single speaker and conversations) are muted**, while silence is preserved. You can customize this behavior by manually editing timeline JSON files or using the direct time range commands.
 
 ### Built-in Effect Labels
 
-- **`black`**: Mute audio AND black out video
-- **`mute`**: Mute audio only
-- **`hide`**: Mute audio AND black out video (same as black)
-- **`speaking`**: No effects by default (single speaker)
-- **`conversation`**: No effects by default (multiple speakers)
-- **`silence`**: No effects (no speech)
+- **`black`**: Black out video but preserve audio
+- **`mute`**: Mute audio only (keep video)
+- **`all`**: Remove both voice and video
+- **`speaking`**: Mute audio by default (single speaker detected)
+- **`conversation`**: Mute audio by default (multiple speakers detected)
+- **`silence`**: No effects (no speech detected)
 
 ### Effect Types
 
@@ -77,13 +88,13 @@ The tool uses a flexible label-based effects system. You can configure different
 ### Basic Processing
 
 ```bash
-# Process a single file with timeline generation
+# Process a single file with timeline generation (automatically mutes speech)
 uv run main.py process input.mp4 --generate-timeline
 
-# Process all files in a directory
+# Process all files in a directory (automatically mutes speech)
 uv run main.py process /path/to/directory --generate-timeline
 
-# Apply effects to files with existing timelines
+# Apply effects to files with existing timelines (speech segments will be muted)
 uv run main.py apply-edits /path/to/directory
 ```
 
@@ -131,7 +142,7 @@ You can manually edit timeline JSON files to control exactly what effects are ap
       "duration": "0:05.800", 
       "type": "speech",
       "speakers": 1,
-      "label": "black"  // Changed from "speaking" - will mute AND black
+      "label": "black"  // Changed from "speaking" - will black video, preserve audio
     },
     {
       "start": "0:08.300", 
@@ -139,7 +150,7 @@ You can manually edit timeline JSON files to control exactly what effects are ap
       "duration": "0:07.400",
       "type": "speech",
       "speakers": 2, 
-      "label": "mute"   // Changed from "conversation" - will mute only
+      "label": "conversation"  // Default - will mute audio only
     }
   ]
 }
@@ -204,6 +215,25 @@ uv run main.py apply-edits DIRECTORY [OPTIONS]
 - `--output-suffix TEXT`: Suffix for output files (default: "_edited")
 - `--effect-labels LABEL [...]`: Labels to apply effects to (backward compatibility)
 
+### Apply-Effects Mode (New!)
+
+```bash
+uv run main.py apply-effects INPUT TIME_RANGES [OPTIONS]
+```
+
+**Arguments:**
+- `INPUT`: Path to input media file
+- `TIME_RANGES`: One or more time ranges (e.g., "1:30-2:45" "5:00-5:30")
+
+**Options:**
+- `-o, --output PATH`: Custom output file path
+- `--effect {black,mute,all}`: Type of effect to apply (default: "all")
+
+**Time Range Formats:**
+- `"MM:SS-MM:SS"`: Minutes and seconds (e.g., "1:30-2:45")
+- `"MM:SS.sss-MM:SS.sss"`: With milliseconds (e.g., "1:30.500-2:45.750")
+- `"SS-SS"`: Seconds only (e.g., "90-165")
+
 ### Debug Mode
 
 ```bash
@@ -262,12 +292,12 @@ The tool generates detailed JSON timelines with the following structure:
 
 ### Timeline Labels
 
-- **`silence`**: No voice activity detected
-- **`speaking`**: Single person speaking  
-- **`conversation`**: Multiple people speaking (overlapped/simultaneous speech)
-- **`black`**: Custom label for segments to mute audio and black video (manual editing)
+- **`silence`**: No voice activity detected (no effects applied)
+- **`speaking`**: Single person speaking (audio muted by default)
+- **`conversation`**: Multiple people speaking (audio muted by default)
+- **`black`**: Custom label for segments to black video but preserve audio (manual editing)
 - **`mute`**: Custom label for segments to mute audio only (manual editing)
-- **`hide`**: Custom label for segments to mute audio and black video (manual editing)
+- **`all`**: Custom label for segments to remove both voice and video (manual editing)
 
 ## Supported Formats
 
@@ -280,6 +310,51 @@ The tool generates detailed JSON timelines with the following structure:
 ### Output Quality
 - **Audio**: AAC 192kbps (when processing), original codec (when copying)
 - **Video**: Original codec (when copying), H.264 fast preset (when processing)
+
+## New Feature: Direct Time Range Processing
+
+The `apply-effects` command allows you to directly specify time ranges without needing to generate and edit timeline files. This is perfect when you already know exactly which segments need effects applied.
+
+### Quick Time Range Examples
+
+```bash
+# Black out video (but keep audio) from 1:30 to 2:45
+uv run main.py apply-effects video.mp4 "1:30-2:45" --effect black
+
+# Mute audio from multiple segments  
+uv run main.py apply-effects video.mp4 "0:30-1:00" "3:15-4:30" --effect mute
+
+# Remove both audio and video from specific ranges
+uv run main.py apply-effects video.mp4 "2:00-2:30" "5:45-6:15" --effect all
+
+# Using different time formats
+uv run main.py apply-effects video.mp4 "90-120" "300.5-315.75" --effect black
+```
+
+### Effect Types Explained
+
+- **`--effect black`**: Video becomes black, but original audio is preserved
+- **`--effect mute`**: Audio is silenced, but video remains unchanged  
+- **`--effect all`**: Both audio and video are removed (audio muted + video blacked)
+
+### Advantages of Time Range Processing
+
+✅ **No timeline generation required** - process immediately  
+✅ **Handle overlapping ranges** - FFmpeg automatically merges overlapping segments  
+✅ **Multiple time formats** - use what's convenient (MM:SS, seconds, etc.)  
+✅ **Fast and direct** - skip the analyze → edit → apply workflow  
+✅ **Perfect for known segments** - when you already know what needs censoring
+
+### When to Use Which Approach
+
+| Use Case | Recommended Command | Why |
+|----------|-------------------|-----|
+| **You know exact times to censor** | `apply-effects` | Direct and fast, no analysis needed |
+| **You need to find where people speak** | `process` + `apply-edits` | AI finds speech segments automatically |
+| **You want to distinguish speakers** | `process --detailed-analysis` | Better speaker detection |
+| **Batch processing many files** | `process` directory + `apply-edits` | Analyze multiple files at once |
+| **You want to review before applying** | `process --generate-timeline` → edit → `apply-edits` | Manual control over each segment |
+| **Quick one-off censoring** | `apply-effects` | Immediate results |
 
 ## Examples
 
@@ -322,6 +397,22 @@ uv run main.py process podcast.mp3 --generate-timeline
 uv run main.py apply-edits . --output-suffix "_solo"
 ```
 
+### Example 5: Direct Time Range Processing (New!)
+
+```bash
+# Quick censoring without timeline analysis
+uv run main.py apply-effects interview.mp4 "5:30-6:15" "12:00-12:45" --effect black
+
+# Mute specific questions in a Q&A video
+uv run main.py apply-effects qa_session.mp4 "2:15-2:30" "8:45-9:00" --effect mute
+
+# Remove entire segments completely
+uv run main.py apply-effects conference.mp4 "45:30-47:00" "1:15:20-1:16:30" --effect all
+
+# Mix of different time formats
+uv run main.py apply-effects video.mp4 "30-45" "1:30.5-2:15.75" "180-200" --effect black
+```
+
 ## Troubleshooting
 
 ### Common Issues
@@ -349,6 +440,16 @@ uv run main.py apply-edits . --output-suffix "_solo"
    ```bash
    # Process in smaller chunks or use detailed analysis
    uv run main.py process large_file.mp4 --detailed-analysis
+   ```
+
+5. **Time Range Format Errors**:
+   ```bash
+   # Make sure time ranges use proper format
+   # Good: "1:30-2:45", "90-120", "1:30.5-2:45.75"
+   # Bad: "1:30:2:45", "1.30-2.45"
+   
+   # Test time parsing first
+   uv run main.py apply-effects test.mp4 "0:05-0:10" --effect mute
    ```
 
 ### Debug Commands
@@ -383,9 +484,17 @@ You can modify the `EFFECT_CONFIGS` in `main.py` to add your own label-to-effect
 
 ```python
 EFFECT_CONFIGS = {
+    "speaking": {"mute_audio": True, "black_video": False},   # Mute single speaker segments
+    "conversation": {"mute_audio": True, "black_video": False}, # Mute conversation segments
+    "silence": {"mute_audio": False, "black_video": False},   # No effects for silence
+    "black": {"mute_audio": False, "black_video": True},      # Black video, preserve audio
+    "mute": {"mute_audio": True, "black_video": False},       # Mute audio, keep video
+    "all": {"mute_audio": True, "black_video": True},         # Remove both
+    
+    # Add your custom effects:
     "custom_label": {"mute_audio": True, "black_video": False},
-    "another_label": {"mute_audio": True, "black_video": True},
-    # ... existing configs
+    "sensitive": {"mute_audio": True, "black_video": True},
+    "blur": {"mute_audio": False, "black_video": True},      # Could be extended for blur effects
 }
 ```
 

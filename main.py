@@ -612,14 +612,105 @@ def mmss_to_seconds(mmss_str):
     return minutes * 60 + seconds
 
 
+def parse_time_range(time_str):
+    """
+    Parse time range string into start and end seconds.
+    
+    Supports formats:
+    - "MM:SS.sss-MM:SS.sss" (range)
+    - "MM:SS.sss" (single time point)
+    - "SS.sss" (seconds only)
+    - "SS" (integer seconds)
+    
+    Returns:
+        tuple: (start_seconds, end_seconds) or (time_seconds, None) for single time
+    """
+    if "-" in time_str:
+        # Range format
+        start_str, end_str = time_str.split("-", 1)
+        start_time = parse_single_time(start_str.strip())
+        end_time = parse_single_time(end_str.strip())
+        return (start_time, end_time)
+    else:
+        # Single time point
+        time_seconds = parse_single_time(time_str.strip())
+        return (time_seconds, None)
+
+
+def parse_single_time(time_str):
+    """
+    Parse a single time string into seconds.
+    
+    Supports formats:
+    - "MM:SS.sss"
+    - "MM:SS"
+    - "SS.sss"
+    - "SS" (integer)
+    """
+    time_str = time_str.strip()
+    
+    if ":" in time_str:
+        # MM:SS or MM:SS.sss format
+        parts = time_str.split(":")
+        minutes = int(parts[0])
+        seconds = float(parts[1])
+        return minutes * 60 + seconds
+    else:
+        # Just seconds
+        return float(time_str)
+
+
+def apply_effects_to_time_ranges(input_path, output_path, time_ranges, effect_type="all"):
+    """
+    Apply effects to specific time ranges without needing a timeline file.
+    
+    Args:
+        input_path: Path to input media file
+        output_path: Path for output media file  
+        time_ranges: List of time range strings (e.g., ["1:30-2:45", "5:00-5:30"])
+        effect_type: Type of effect to apply ("black", "mute", "all", "hide")
+    """
+    # Parse time ranges into segments
+    segments = []
+    for time_range in time_ranges:
+        start_time, end_time = parse_time_range(time_range)
+        if end_time is None:
+            raise ValueError(f"Time range '{time_range}' must specify both start and end times (format: start-end)")
+        segments.append((start_time, end_time))
+    
+    # Get effect configuration
+    effects = EFFECT_CONFIGS.get(effect_type, {"mute_audio": False, "black_video": False})
+    
+    # Convert to effect_segments format
+    effect_segments = {"mute_only": [], "black_only": [], "mute_and_black": []}
+    
+    if effects["mute_audio"] and effects["black_video"]:
+        effect_segments["mute_and_black"] = segments
+    elif effects["mute_audio"]:
+        effect_segments["mute_only"] = segments
+    elif effects["black_video"]:
+        effect_segments["black_only"] = segments
+    else:
+        print(f"No effects configured for effect type '{effect_type}'. No processing will be done.")
+        # Just copy the file
+        subprocess.run(
+            ["ffmpeg", "-i", str(input_path), "-c", "copy", str(output_path), "-y"],
+            check=True,
+        )
+        return
+    
+    # Apply the effects
+    process_media_with_effects(input_path, output_path, effect_segments)
+
+
 # Effect configuration for different labels
 EFFECT_CONFIGS = {
-    "speaking": {"mute_audio": False, "black_video": False},
-    "conversation": {"mute_audio": False, "black_video": False},
-    "silence": {"mute_audio": False, "black_video": False},
-    "black": {"mute_audio": True, "black_video": True},
-    "mute": {"mute_audio": True, "black_video": False},
-    "hide": {"mute_audio": True, "black_video": True},
+    "speaking": {"mute_audio": True, "black_video": False},   # Mute single speaker segments
+    "conversation": {"mute_audio": True, "black_video": False}, # Mute conversation segments
+    "silence": {"mute_audio": False, "black_video": False},   # No effects for silence
+    "black": {"mute_audio": False, "black_video": True},      # Black video but preserve audio
+    "mute": {"mute_audio": True, "black_video": False},       # Mute audio only
+    "all": {"mute_audio": True, "black_video": True},         # Remove both voice and video
 }
 
 
@@ -1295,13 +1386,25 @@ def main():
             "For backward compatibility, use 'speaking' and 'conversation' to mute audio only.",
         )
 
+        # --- Apply-effects command ---
+        effects_parser = subparsers.add_parser("apply-effects", help="Apply effects to specific time ranges")
+        effects_parser.add_argument("input_path", help="Path to input media file")
+        effects_parser.add_argument("time_ranges", nargs="+", help="Time ranges to apply effects to (e.g., '1:30-2:45' '5:00-5:30')")
+        effects_parser.add_argument("-o", "--output", help="Path for output file (default: input_filename_effects.ext)")
+        effects_parser.add_argument(
+            "--effect", 
+            default="all", 
+            choices=["black", "mute", "all"],
+            help="Type of effect to apply (default: all)"
+        )
+
         # --- Debug command ---
         debug_parser = subparsers.add_parser("debug-encoding", help="Debug file encoding issues")
         debug_parser.add_argument("file_path", help="Path to file to analyze encoding")
 
         # --- Backward compatibility: if no subcommand, assume 'process' ---
         args_list = sys.argv[1:]
-        if not args_list or args_list[0] not in ["process", "apply-edits", "debug-encoding"]:
+        if not args_list or args_list[0] not in ["process", "apply-edits", "apply-effects", "debug-encoding"]:
             # If input looks like a file/dir path, prepend 'process'
             if args_list and (Path(args_list[0]).exists() or Path(args_list[0]).is_dir()):
                 args_list.insert(0, "process")
@@ -1328,6 +1431,32 @@ def main():
                 print(f"Error: Directory not found: {directory}", file=sys.stderr)
                 return 1
             return apply_timeline_edits(directory, args.output_suffix, args.effect_labels)
+
+        elif args.mode == "apply-effects":
+            input_path = Path(args.input_path)
+            if not input_path.exists():
+                print(f"Error: Input file not found: {input_path}", file=sys.stderr)
+                return 1
+            
+            if not (is_video_file(input_path) or is_audio_file(input_path)):
+                print(f"Error: Unsupported file format for {input_path}", file=sys.stderr)
+                return 1
+            
+            # Determine output path
+            if args.output:
+                output_path = Path(args.output)
+            else:
+                output_path = input_path.parent / f"{input_path.stem}_effects{input_path.suffix}"
+            
+            try:
+                print(f"Applying {args.effect} effects to {len(args.time_ranges)} time ranges...")
+                print(f"Time ranges: {', '.join(args.time_ranges)}")
+                apply_effects_to_time_ranges(input_path, output_path, args.time_ranges, args.effect)
+                print(f"✓ Effects applied successfully: {output_path}")
+                return 0
+            except Exception as e:
+                print(f"Error applying effects: {e}", file=sys.stderr)
+                return 1
 
         elif args.mode == "debug-encoding":
             file_path = Path(args.file_path)
