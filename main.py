@@ -234,13 +234,11 @@ def analyze_speaker_segments_direct(audio_path, model, chunk_duration=10.0):
                     if num_speakers > 1:
                         frame_start = chunk_start_time + frame_idx * frame_duration
                         frame_end = frame_start + frame_duration
-                        speaker_segments.append(
-                            {
-                                "start": frame_start,
-                                "end": frame_end,
-                                "num_speakers": num_speakers.item(),
-                            }
-                        )
+                        speaker_segments.append({
+                            "start": frame_start,
+                            "end": frame_end,
+                            "num_speakers": num_speakers.item(),
+                        })
 
         # Calculate confidence score
         confidence_score = (multi_speaker_chunks / total_chunks) if total_chunks > 0 else 0
@@ -366,13 +364,11 @@ def generate_speaker_timeline(audio_path, model, min_duration_on=0.1, min_durati
             for frame_idx, num_speakers in enumerate(active_speakers_per_frame):
                 frame_start = chunk_start_time + (frame_idx * chunk_duration / frames_per_chunk)
                 frame_end = min(frame_start + (chunk_duration / frames_per_chunk), total_duration)
-                speaker_counts_timeline.append(
-                    {
-                        "start": frame_start,
-                        "end": frame_end,
-                        "speaker_count": num_speakers.item(),
-                    }
-                )
+                speaker_counts_timeline.append({
+                    "start": frame_start,
+                    "end": frame_end,
+                    "speaker_count": num_speakers.item(),
+                })
 
         # Generate timeline segments
         timeline = []
@@ -427,33 +423,27 @@ def generate_speaker_timeline(audio_path, model, min_duration_on=0.1, min_durati
             }
 
             if not voice_active:
-                base_segment.update(
-                    {
-                        "type": "silence",
-                        "speakers": 0,
-                        "label": "silence",
-                    }
-                )
+                base_segment.update({
+                    "type": "silence",
+                    "speakers": 0,
+                    "label": "silence",
+                })
                 return base_segment
 
             speaker_count = max(get_speaker_count_at_time(start), get_speaker_count_at_time(end))
 
             if overlapped or speaker_count > 1:
-                base_segment.update(
-                    {
-                        "type": "speech",
-                        "speakers": max(speaker_count, 2),
-                        "label": "conversation",
-                    }
-                )
+                base_segment.update({
+                    "type": "speech",
+                    "speakers": max(speaker_count, 2),
+                    "label": "conversation",
+                })
             else:
-                base_segment.update(
-                    {
-                        "type": "speech",
-                        "speakers": max(speaker_count, 1),
-                        "label": "speaking",
-                    }
-                )
+                base_segment.update({
+                    "type": "speech",
+                    "speakers": max(speaker_count, 1),
+                    "label": "speaking",
+                })
             return base_segment
 
         # Process events to create timeline
@@ -615,13 +605,13 @@ def mmss_to_seconds(mmss_str):
 def parse_time_range(time_str):
     """
     Parse time range string into start and end seconds.
-    
+
     Supports formats:
     - "MM:SS.sss-MM:SS.sss" (range)
     - "MM:SS.sss" (single time point)
     - "SS.sss" (seconds only)
     - "SS" (integer seconds)
-    
+
     Returns:
         tuple: (start_seconds, end_seconds) or (time_seconds, None) for single time
     """
@@ -640,7 +630,7 @@ def parse_time_range(time_str):
 def parse_single_time(time_str):
     """
     Parse a single time string into seconds.
-    
+
     Supports formats:
     - "MM:SS.sss"
     - "MM:SS"
@@ -648,7 +638,7 @@ def parse_single_time(time_str):
     - "SS" (integer)
     """
     time_str = time_str.strip()
-    
+
     if ":" in time_str:
         # MM:SS or MM:SS.sss format
         parts = time_str.split(":")
@@ -663,10 +653,10 @@ def parse_single_time(time_str):
 def apply_effects_to_time_ranges(input_path, output_path, time_ranges, effect_type="all"):
     """
     Apply effects to specific time ranges without needing a timeline file.
-    
+
     Args:
         input_path: Path to input media file
-        output_path: Path for output media file  
+        output_path: Path for output media file
         time_ranges: List of time range strings (e.g., ["1:30-2:45", "5:00-5:30"])
         effect_type: Type of effect to apply ("black", "mute", "all", "hide")
     """
@@ -677,13 +667,13 @@ def apply_effects_to_time_ranges(input_path, output_path, time_ranges, effect_ty
         if end_time is None:
             raise ValueError(f"Time range '{time_range}' must specify both start and end times (format: start-end)")
         segments.append((start_time, end_time))
-    
+
     # Get effect configuration
     effects = EFFECT_CONFIGS.get(effect_type, {"mute_audio": False, "black_video": False})
-    
+
     # Convert to effect_segments format
     effect_segments = {"mute_only": [], "black_only": [], "mute_and_black": []}
-    
+
     if effects["mute_audio"] and effects["black_video"]:
         effect_segments["mute_and_black"] = segments
     elif effects["mute_audio"]:
@@ -698,19 +688,19 @@ def apply_effects_to_time_ranges(input_path, output_path, time_ranges, effect_ty
             check=True,
         )
         return
-    
+
     # Apply the effects
     process_media_with_effects(input_path, output_path, effect_segments)
 
 
 # Effect configuration for different labels
 EFFECT_CONFIGS = {
-    "speaking": {"mute_audio": True, "black_video": False},   # Mute single speaker segments
-    "conversation": {"mute_audio": True, "black_video": False}, # Mute conversation segments
-    "silence": {"mute_audio": False, "black_video": False},   # No effects for silence
-    "black": {"mute_audio": False, "black_video": True},      # Black video but preserve audio
-    "mute": {"mute_audio": True, "black_video": False},       # Mute audio only
-    "all": {"mute_audio": True, "black_video": True},         # Remove both voice and video
+    "speaking": {"mute_audio": True, "black_video": False},  # Mute single speaker segments
+    "conversation": {"mute_audio": True, "black_video": False},  # Mute conversation segments
+    "silence": {"mute_audio": False, "black_video": False},  # No effects for silence
+    "black": {"mute_audio": False, "black_video": True},  # Black video but preserve audio
+    "mute": {"mute_audio": True, "black_video": False},  # Mute audio only
+    "all": {"mute_audio": True, "black_video": True},  # Remove both voice and video
 }
 
 
@@ -908,45 +898,6 @@ def extract_audio_from_video(video_path, audio_path):
     print(f"Audio extracted to: {audio_path}")
 
 
-# Backward compatibility functions for old processing functions
-def process_audio_with_ffmpeg(input_path, output_path, voice_segments):
-    """
-    DEPRECATED: Use process_media_with_effects() instead.
-    Process audio file with ffmpeg to zero out voice segments.
-    """
-    if not voice_segments:
-        print("No voice segments detected. Copying original file.")
-        subprocess.run(
-            ["ffmpeg", "-i", str(input_path), "-c", "copy", str(output_path), "-y"],
-            check=True,
-        )
-        return
-
-    # Convert to effect segments format for new system
-    effect_segments = {"mute_only": voice_segments, "black_only": [], "mute_and_black": []}
-
-    process_media_with_effects(input_path, output_path, effect_segments)
-
-
-def process_video_with_ffmpeg(input_path, output_path, voice_segments):
-    """
-    DEPRECATED: Use process_media_with_effects() instead.
-    Process video file with ffmpeg to zero out voice segments in audio track.
-    """
-    if not voice_segments:
-        print("No voice segments detected. Copying original file.")
-        subprocess.run(
-            ["ffmpeg", "-i", str(input_path), "-c", "copy", str(output_path), "-y"],
-            check=True,
-        )
-        return
-
-    # Convert to effect segments format for new system
-    effect_segments = {"mute_only": voice_segments, "black_only": [], "mute_and_black": []}
-
-    process_media_with_effects(input_path, output_path, effect_segments)
-
-
 def find_timeline_files(directory):
     """Find all timeline JSON files in a directory."""
     timeline_files = []
@@ -1074,25 +1025,6 @@ def apply_timeline_edits(directory, output_suffix="_edited", effect_labels=None)
 
     print("✓ All files processed!")
     return 0
-
-
-# Backward compatibility function
-def extract_conversation_segments(timeline_data):
-    """
-    Extract speech segments that should be zeroed out.
-    DEPRECATED: Use extract_segments_by_effects() instead.
-    Kept for backward compatibility.
-    """
-    segments = []
-
-    for segment in timeline_data["timeline"]:
-        # Zero out all speech segments (both 'speaking' and 'conversation')
-        if segment.get("label") in ["speaking", "conversation"]:
-            start_seconds = mmss_to_seconds(segment["start"])
-            end_seconds = mmss_to_seconds(segment["end"])
-            segments.append((start_seconds, end_seconds))
-
-    return segments
 
 
 def add_process_arguments(parser):
@@ -1292,13 +1224,14 @@ def process_single_file(args):
                 if not voice_segments:
                     print(f"No voice segments detected in {input_path.name}. File not modified.")
                 else:
+                    effect_segments = {"mute_only": voice_segments, "black_only": [], "mute_and_black": []}
                     if is_video:
                         print(f"🎬 Processing video: {input_path.name}...")
-                        process_video_with_ffmpeg(input_path, output_path, voice_segments)
+                        process_media_with_effects(input_path, output_path, effect_segments)
                         print(f"✓ Video processing complete: {output_path}")
                     else:
                         print(f"🎵 Processing audio: {input_path.name}...")
-                        process_audio_with_ffmpeg(input_path, output_path, voice_segments)
+                        process_media_with_effects(input_path, output_path, effect_segments)
                         print(f"✓ Audio processing complete: {output_path}")
 
         finally:
@@ -1389,13 +1322,12 @@ def main():
         # --- Apply-effects command ---
         effects_parser = subparsers.add_parser("apply-effects", help="Apply effects to specific time ranges")
         effects_parser.add_argument("input_path", help="Path to input media file")
-        effects_parser.add_argument("time_ranges", nargs="+", help="Time ranges to apply effects to (e.g., '1:30-2:45' '5:00-5:30')")
+        effects_parser.add_argument(
+            "time_ranges", nargs="+", help="Time ranges to apply effects to (e.g., '1:30-2:45' '5:00-5:30')"
+        )
         effects_parser.add_argument("-o", "--output", help="Path for output file (default: input_filename_effects.ext)")
         effects_parser.add_argument(
-            "--effect", 
-            default="all", 
-            choices=["black", "mute", "all"],
-            help="Type of effect to apply (default: all)"
+            "--effect", default="all", choices=["black", "mute", "all"], help="Type of effect to apply (default: all)"
         )
 
         # --- Debug command ---
@@ -1437,17 +1369,17 @@ def main():
             if not input_path.exists():
                 print(f"Error: Input file not found: {input_path}", file=sys.stderr)
                 return 1
-            
+
             if not (is_video_file(input_path) or is_audio_file(input_path)):
                 print(f"Error: Unsupported file format for {input_path}", file=sys.stderr)
                 return 1
-            
+
             # Determine output path
             if args.output:
                 output_path = Path(args.output)
             else:
                 output_path = input_path.parent / f"{input_path.stem}_effects{input_path.suffix}"
-            
+
             try:
                 print(f"Applying {args.effect} effects to {len(args.time_ranges)} time ranges...")
                 print(f"Time ranges: {', '.join(args.time_ranges)}")
