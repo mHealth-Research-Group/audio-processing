@@ -16,10 +16,6 @@ load_dotenv()
 
 # Set device for PyTorch operations
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-print(f"Using device: {DEVICE}")
-if DEVICE.type == "cuda":
-    print(f"   GPU: {torch.cuda.get_device_name()}")
-    print(f"   Memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB")
 
 # Ensure UTF-8 encoding on Windows
 if sys.platform.startswith("win"):
@@ -189,13 +185,13 @@ def analyze_speaker_segments_direct(audio_path, model, chunk_duration=10.0):
         if waveform.shape[0] > 1:
             waveform = torch.mean(waveform, dim=0, keepdim=True)
 
+        # Move waveform to GPU if available first
+        waveform = waveform.to(DEVICE)
+        
         if sample_rate != 16000:
-            resampler = torchaudio.transforms.Resample(sample_rate, 16000)
+            resampler = torchaudio.transforms.Resample(sample_rate, 16000).to(DEVICE)
             waveform = resampler(waveform)
             sample_rate = 16000
-
-        # Move waveform to GPU if available
-        waveform = waveform.to(DEVICE)
 
         # Calculate chunk size in samples
         chunk_size = int(chunk_duration * sample_rate)
@@ -207,10 +203,13 @@ def analyze_speaker_segments_direct(audio_path, model, chunk_duration=10.0):
         multi_speaker_chunks = 0
         total_chunks = 0
 
-        # Initialize powerset decoder and move to GPU
+        # Initialize powerset decoder
         max_speakers_per_chunk = 3
         max_speakers_per_frame = 2
-        to_multilabel = Powerset(max_speakers_per_chunk, max_speakers_per_frame).to_multilabel
+        powerset_decoder = Powerset(max_speakers_per_chunk, max_speakers_per_frame)
+        if DEVICE.type == "cuda":
+            powerset_decoder = powerset_decoder.to(DEVICE)
+        to_multilabel = powerset_decoder.to_multilabel
 
         # Process in batches for better GPU utilization
         batch_size = 4 if DEVICE.type == "cuda" else 1
@@ -236,7 +235,11 @@ def analyze_speaker_segments_direct(audio_path, model, chunk_duration=10.0):
 
                 # Run model inference with GPU acceleration
                 with torch.no_grad():
-                    with torch.cuda.amp.autocast(enabled=DEVICE.type == "cuda"):
+                    if DEVICE.type == "cuda":
+                        with torch.cuda.amp.autocast("cuda"):
+                            powerset_output = model(batch)
+                            multilabel_output = to_multilabel(powerset_output)
+                    else:
                         powerset_output = model(batch)
                         multilabel_output = to_multilabel(powerset_output)
 
@@ -351,13 +354,13 @@ def generate_speaker_timeline(audio_path, model, min_duration_on=0.1, min_durati
         if waveform.shape[0] > 1:
             waveform = torch.mean(waveform, dim=0, keepdim=True)
 
+        # Move waveform to GPU if available first
+        waveform = waveform.to(DEVICE)
+        
         if sample_rate != 16000:
-            resampler = torchaudio.transforms.Resample(sample_rate, 16000)
+            resampler = torchaudio.transforms.Resample(sample_rate, 16000).to(DEVICE)
             waveform = resampler(waveform)
             sample_rate = 16000
-
-        # Move waveform to GPU if available
-        waveform = waveform.to(DEVICE)
 
         # Get total duration
         total_duration = waveform.shape[1] / sample_rate
@@ -366,7 +369,10 @@ def generate_speaker_timeline(audio_path, model, min_duration_on=0.1, min_durati
         # Initialize powerset decoder for detailed analysis
         max_speakers_per_chunk = 3
         max_speakers_per_frame = 2
-        to_multilabel = Powerset(max_speakers_per_chunk, max_speakers_per_frame).to_multilabel
+        powerset_decoder = Powerset(max_speakers_per_chunk, max_speakers_per_frame)
+        if DEVICE.type == "cuda":
+            powerset_decoder = powerset_decoder.to(DEVICE)
+        to_multilabel = powerset_decoder.to_multilabel
 
         # Process audio in chunks for speaker counting
         chunk_duration = 10.0
@@ -397,7 +403,11 @@ def generate_speaker_timeline(audio_path, model, min_duration_on=0.1, min_durati
 
                 # Run model inference with GPU acceleration
                 with torch.no_grad():
-                    with torch.cuda.amp.autocast(enabled=DEVICE.type == "cuda"):
+                    if DEVICE.type == "cuda":
+                        with torch.cuda.amp.autocast("cuda"):
+                            powerset_output = model(batch)
+                            multilabel_output = to_multilabel(powerset_output)
+                    else:
                         powerset_output = model(batch)
                         multilabel_output = to_multilabel(powerset_output)
 
