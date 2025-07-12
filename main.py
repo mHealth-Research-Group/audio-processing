@@ -57,6 +57,9 @@ def load_model():
     if DEVICE.type == "cuda":
         torch.backends.cudnn.benchmark = True
         torch.backends.cudnn.deterministic = False
+        # Enable TensorFloat-32 (TF32) for better performance on Ampere GPUs
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
 
     return model
 
@@ -187,7 +190,7 @@ def analyze_speaker_segments_direct(audio_path, model, chunk_duration=10.0):
 
         # Move waveform to GPU if available first
         waveform = waveform.to(DEVICE)
-        
+
         if sample_rate != 16000:
             resampler = torchaudio.transforms.Resample(sample_rate, 16000).to(DEVICE)
             waveform = resampler(waveform)
@@ -236,7 +239,7 @@ def analyze_speaker_segments_direct(audio_path, model, chunk_duration=10.0):
                 # Run model inference with GPU acceleration
                 with torch.no_grad():
                     if DEVICE.type == "cuda":
-                        with torch.cuda.amp.autocast("cuda"):
+                        with torch.amp.autocast("cuda"):
                             powerset_output = model(batch)
                             multilabel_output = to_multilabel(powerset_output)
                     else:
@@ -356,7 +359,7 @@ def generate_speaker_timeline(audio_path, model, min_duration_on=0.1, min_durati
 
         # Move waveform to GPU if available first
         waveform = waveform.to(DEVICE)
-        
+
         if sample_rate != 16000:
             resampler = torchaudio.transforms.Resample(sample_rate, 16000).to(DEVICE)
             waveform = resampler(waveform)
@@ -404,7 +407,7 @@ def generate_speaker_timeline(audio_path, model, min_duration_on=0.1, min_durati
                 # Run model inference with GPU acceleration
                 with torch.no_grad():
                     if DEVICE.type == "cuda":
-                        with torch.cuda.amp.autocast("cuda"):
+                        with torch.amp.autocast("cuda"):
                             powerset_output = model(batch)
                             multilabel_output = to_multilabel(powerset_output)
                     else:
@@ -1144,7 +1147,7 @@ def _handle_speaker_and_timeline_analysis(args, input_path, model):
 
         if args.detailed_analysis:
             speaker_analysis = analyze_speaker_segments_direct(input_path, model)
-            print("📊 Detailed Speaker Analysis Results:")
+            print("Detailed Speaker Analysis Results:")
             print(f"   Multiple speakers detected: {'✓ YES' if speaker_analysis['has_multiple_speakers'] else '✗ NO'}")
             print(f"   Maximum speakers detected: {speaker_analysis['max_speakers_detected']}")
             print(f"   Confidence score: {speaker_analysis['confidence_score']:.2f}")
@@ -1158,7 +1161,7 @@ def _handle_speaker_and_timeline_analysis(args, input_path, model):
                 args.min_duration_on,
                 args.min_duration_off,
             )
-            print("📊 Speaker Analysis Results:")
+            print("Speaker Analysis Results:")
             print(f"   Multiple speakers detected: {'✓ YES' if speaker_analysis['has_multiple_speakers'] else '✗ NO'}")
             print(f"   Total speech duration: {speaker_analysis['total_speech_duration']:.2f} seconds")
             print(f"   Overlapped speech duration: {speaker_analysis['overlapped_speech_duration']:.2f} seconds")
@@ -1172,7 +1175,7 @@ def _handle_speaker_and_timeline_analysis(args, input_path, model):
     timeline_data = None
     voice_segments = None
     if args.generate_timeline:
-        print("🕒 Generating speaker timeline...")
+        print("Generating speaker timeline...")
         timeline_data = generate_speaker_timeline(
             input_path,
             model,
