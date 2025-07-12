@@ -14,6 +14,13 @@ import sys
 
 load_dotenv()
 
+# Set device for PyTorch operations
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(f"Using device: {DEVICE}")
+if DEVICE.type == "cuda":
+    print(f"   GPU: {torch.cuda.get_device_name()}")
+    print(f"   Memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB")
+
 # Ensure UTF-8 encoding on Windows
 if sys.platform.startswith("win"):
     # Set console encoding to UTF-8 for Windows
@@ -41,12 +48,21 @@ def run_subprocess_with_encoding(*args, **kwargs):
 
 
 def load_model():
-    """Load the pyannote segmentation model."""
+    """Load the pyannote segmentation model and move to GPU if available."""
     token = os.getenv("HUGGINGFACE_ACCESS_TOKEN")
     if not token:
         raise ValueError("HUGGINGFACE_ACCESS_TOKEN environment variable is required")
 
-    return Model.from_pretrained("pyannote/segmentation-3.0", use_auth_token=token)
+    model = Model.from_pretrained("pyannote/segmentation-3.0", use_auth_token=token)
+    model = model.to(DEVICE)
+    model.eval()  # Set to evaluation mode for faster inference
+
+    # Enable optimizations for inference
+    if DEVICE.type == "cuda":
+        torch.backends.cudnn.benchmark = True
+        torch.backends.cudnn.deterministic = False
+
+    return model
 
 
 def detect_voice_segments(audio_path, model, min_duration_on=0.1, min_duration_off=0.1):
@@ -178,6 +194,9 @@ def analyze_speaker_segments_direct(audio_path, model, chunk_duration=10.0):
             waveform = resampler(waveform)
             sample_rate = 16000
 
+        # Move waveform to GPU if available
+        waveform = waveform.to(DEVICE)
+
         # Calculate chunk size in samples
         chunk_size = int(chunk_duration * sample_rate)
         total_samples = waveform.shape[1]
@@ -188,10 +207,15 @@ def analyze_speaker_segments_direct(audio_path, model, chunk_duration=10.0):
         multi_speaker_chunks = 0
         total_chunks = 0
 
-        # Initialize powerset decoder
+        # Initialize powerset decoder and move to GPU
         max_speakers_per_chunk = 3
         max_speakers_per_frame = 2
         to_multilabel = Powerset(max_speakers_per_chunk, max_speakers_per_frame).to_multilabel
+
+        # Process in batches for better GPU utilization
+        batch_size = 4 if DEVICE.type == "cuda" else 1
+        chunks = []
+        chunk_start_times = []
 
         for start_sample in range(0, total_samples, chunk_size):
             end_sample = min(start_sample + chunk_size, total_samples)
@@ -202,43 +226,51 @@ def analyze_speaker_segments_direct(audio_path, model, chunk_duration=10.0):
                 padding = chunk_size - chunk.shape[1]
                 chunk = torch.nn.functional.pad(chunk, (0, padding))
 
-            # Add batch dimension
-            chunk = chunk.unsqueeze(0)
+            chunks.append(chunk)
+            chunk_start_times.append(start_sample / sample_rate)
 
-            # Run model inference
-            with torch.no_grad():
-                powerset_output = model(chunk)
-                multilabel_output = to_multilabel(powerset_output)
+            # Process batch when full or at end
+            if len(chunks) == batch_size or start_sample + chunk_size >= total_samples:
+                # Stack chunks into batch
+                batch = torch.stack(chunks, dim=0)
 
-            # Analyze the output
-            # multilabel_output shape: (batch, frames, speakers)
-            # Check for multiple active speakers
-            speaker_activity = multilabel_output.squeeze(0)  # Remove batch dimension
+                # Run model inference with GPU acceleration
+                with torch.no_grad():
+                    with torch.cuda.amp.autocast(enabled=DEVICE.type == "cuda"):
+                        powerset_output = model(batch)
+                        multilabel_output = to_multilabel(powerset_output)
 
-            # Count active speakers per frame
-            active_speakers_per_frame = (speaker_activity > 0.5).sum(dim=1)
-            max_speakers_in_chunk = active_speakers_per_frame.max().item()
+                # Process each chunk in the batch
+                for i, chunk_start_time in enumerate(chunk_start_times):
+                    speaker_activity = multilabel_output[i]  # Get i-th chunk from batch
 
-            # Update statistics
-            max_speakers_detected = max(max_speakers_detected, max_speakers_in_chunk)
-            total_chunks += 1
+                    # Count active speakers per frame
+                    active_speakers_per_frame = (speaker_activity > 0.5).sum(dim=1)
+                    max_speakers_in_chunk = active_speakers_per_frame.max().item()
 
-            if max_speakers_in_chunk > 1:
-                multi_speaker_chunks += 1
+                    # Update statistics
+                    max_speakers_detected = max(max_speakers_detected, max_speakers_in_chunk)
+                    total_chunks += 1
 
-                # Find time segments with multiple speakers
-                chunk_start_time = start_sample / sample_rate
-                frame_duration = chunk_duration / speaker_activity.shape[0]
+                    if max_speakers_in_chunk > 1:
+                        multi_speaker_chunks += 1
 
-                for frame_idx, num_speakers in enumerate(active_speakers_per_frame):
-                    if num_speakers > 1:
-                        frame_start = chunk_start_time + frame_idx * frame_duration
-                        frame_end = frame_start + frame_duration
-                        speaker_segments.append({
-                            "start": frame_start,
-                            "end": frame_end,
-                            "num_speakers": num_speakers.item(),
-                        })
+                        # Find time segments with multiple speakers
+                        frame_duration = chunk_duration / speaker_activity.shape[0]
+
+                        for frame_idx, num_speakers in enumerate(active_speakers_per_frame):
+                            if num_speakers > 1:
+                                frame_start = chunk_start_time + frame_idx * frame_duration
+                                frame_end = frame_start + frame_duration
+                                speaker_segments.append({
+                                    "start": frame_start,
+                                    "end": frame_end,
+                                    "num_speakers": num_speakers.item(),
+                                })
+
+                # Clear batch for next iteration
+                chunks = []
+                chunk_start_times = []
 
         # Calculate confidence score
         confidence_score = (multi_speaker_chunks / total_chunks) if total_chunks > 0 else 0
@@ -324,6 +356,9 @@ def generate_speaker_timeline(audio_path, model, min_duration_on=0.1, min_durati
             waveform = resampler(waveform)
             sample_rate = 16000
 
+        # Move waveform to GPU if available
+        waveform = waveform.to(DEVICE)
+
         # Get total duration
         total_duration = waveform.shape[1] / sample_rate
         print(f"   Total audio duration: {total_duration:.3f} seconds")
@@ -338,6 +373,11 @@ def generate_speaker_timeline(audio_path, model, min_duration_on=0.1, min_durati
         chunk_size = int(chunk_duration * sample_rate)
         speaker_counts_timeline = []
 
+        # Process in batches for better GPU utilization
+        batch_size = 4 if DEVICE.type == "cuda" else 1
+        chunks = []
+        chunk_start_times = []
+
         for start_sample in range(0, waveform.shape[1], chunk_size):
             end_sample = min(start_sample + chunk_size, waveform.shape[1])
             chunk = waveform[:, start_sample:end_sample]
@@ -347,28 +387,40 @@ def generate_speaker_timeline(audio_path, model, min_duration_on=0.1, min_durati
                 padding = chunk_size - chunk.shape[1]
                 chunk = torch.nn.functional.pad(chunk, (0, padding))
 
-            chunk = chunk.unsqueeze(0)  # Add batch dimension
+            chunks.append(chunk)
+            chunk_start_times.append(start_sample / sample_rate)
 
-            # Run model inference
-            with torch.no_grad():
-                powerset_output = model(chunk)
-                multilabel_output = to_multilabel(powerset_output)
+            # Process batch when full or at end
+            if len(chunks) == batch_size or start_sample + chunk_size >= waveform.shape[1]:
+                # Stack chunks into batch
+                batch = torch.stack(chunks, dim=0)
 
-            speaker_activity = multilabel_output.squeeze(0)
-            active_speakers_per_frame = (speaker_activity > 0.5).sum(dim=1)
+                # Run model inference with GPU acceleration
+                with torch.no_grad():
+                    with torch.cuda.amp.autocast(enabled=DEVICE.type == "cuda"):
+                        powerset_output = model(batch)
+                        multilabel_output = to_multilabel(powerset_output)
 
-            # Map frame-level speaker counts to timeline
-            chunk_start_time = start_sample / sample_rate
-            frames_per_chunk = speaker_activity.shape[0]
+                # Process each chunk in the batch
+                for i, chunk_start_time in enumerate(chunk_start_times):
+                    speaker_activity = multilabel_output[i]
+                    active_speakers_per_frame = (speaker_activity > 0.5).sum(dim=1)
 
-            for frame_idx, num_speakers in enumerate(active_speakers_per_frame):
-                frame_start = chunk_start_time + (frame_idx * chunk_duration / frames_per_chunk)
-                frame_end = min(frame_start + (chunk_duration / frames_per_chunk), total_duration)
-                speaker_counts_timeline.append({
-                    "start": frame_start,
-                    "end": frame_end,
-                    "speaker_count": num_speakers.item(),
-                })
+                    # Map frame-level speaker counts to timeline
+                    frames_per_chunk = speaker_activity.shape[0]
+
+                    for frame_idx, num_speakers in enumerate(active_speakers_per_frame):
+                        frame_start = chunk_start_time + (frame_idx * chunk_duration / frames_per_chunk)
+                        frame_end = min(frame_start + (chunk_duration / frames_per_chunk), total_duration)
+                        speaker_counts_timeline.append({
+                            "start": frame_start,
+                            "end": frame_end,
+                            "speaker_count": num_speakers.item(),
+                        })
+
+                # Clear batch for next iteration
+                chunks = []
+                chunk_start_times = []
 
         # Generate timeline segments
         timeline = []
@@ -504,9 +556,7 @@ def generate_speaker_timeline(audio_path, model, min_duration_on=0.1, min_durati
             "total_speaking_time": seconds_to_mmss(total_speaking_time),
             "total_silence_time": seconds_to_mmss(total_silence_time),
             "speech_percentage": round((total_speech_time / total_duration) * 100, 1) if total_duration > 0 else 0,
-            "conversation_percentage": round((total_conversation_time / total_duration) * 100, 1)
-            if total_duration > 0
-            else 0,
+            "conversation_percentage": round((total_conversation_time / total_duration) * 100, 1) if total_duration > 0 else 0,
             "has_multiple_speakers": has_multiple_speakers,
             "num_segments": len(timeline),
         }
@@ -737,9 +787,7 @@ def extract_segments_by_effects(timeline_data, target_effects=None):
 
         # Skip if target_effects specified and this segment doesn't match
         if target_effects is not None:
-            if effects["mute_audio"] != target_effects.get("mute_audio", False) or effects[
-                "black_video"
-            ] != target_effects.get("black_video", False):
+            if effects["mute_audio"] != target_effects.get("mute_audio", False) or effects["black_video"] != target_effects.get("black_video", False):
                 continue
 
         start_seconds = mmss_to_seconds(segment["start"])
@@ -989,11 +1037,7 @@ def apply_timeline_edits(directory, output_suffix="_edited", effect_labels=None)
         effect_segments = extract_segments_by_effects(timeline_data)
 
         # Count total segments with effects
-        total_effect_segments = (
-            len(effect_segments["mute_only"])
-            + len(effect_segments["black_only"])
-            + len(effect_segments["mute_and_black"])
-        )
+        total_effect_segments = len(effect_segments["mute_only"]) + len(effect_segments["black_only"]) + len(effect_segments["mute_and_black"])
 
         print(f"  Found {total_effect_segments} segments with effects to apply")
 
@@ -1033,8 +1077,7 @@ def add_process_arguments(parser):
     parser.add_argument(
         "-o",
         "--output",
-        help="Path for output file (default: input_filename_no_conversations.ext). "
-        "For directory processing, this is an output directory.",
+        help="Path for output file (default: input_filename_no_conversations.ext). For directory processing, this is an output directory.",
     )
     parser.add_argument(
         "--min-duration-on",
@@ -1070,8 +1113,7 @@ def add_process_arguments(parser):
     )
     parser.add_argument(
         "--timeline-output",
-        help="Path for timeline JSON file (default: input_filename_timeline.json). "
-        "For directory processing, this is a directory.",
+        help="Path for timeline JSON file (default: input_filename_timeline.json). For directory processing, this is a directory.",
     )
 
 
@@ -1096,9 +1138,7 @@ def _handle_speaker_and_timeline_analysis(args, input_path, model):
             print(f"   Multiple speakers detected: {'✓ YES' if speaker_analysis['has_multiple_speakers'] else '✗ NO'}")
             print(f"   Maximum speakers detected: {speaker_analysis['max_speakers_detected']}")
             print(f"   Confidence score: {speaker_analysis['confidence_score']:.2f}")
-            print(
-                f"   Multi-speaker chunks: {speaker_analysis['multi_speaker_chunks']}/{speaker_analysis['total_chunks']}"
-            )
+            print(f"   Multi-speaker chunks: {speaker_analysis['multi_speaker_chunks']}/{speaker_analysis['total_chunks']}")
             if speaker_analysis["speaker_segments"]:
                 print(f"   Multi-speaker segments: {len(speaker_analysis['speaker_segments'])} segments")
         else:
@@ -1173,9 +1213,7 @@ def process_single_file(args):
     is_audio = is_audio_file(input_path)
 
     if not (is_video or is_audio):
-        raise ValueError(
-            f"Unsupported file format for {input_path}. Supported formats: {VIDEO_EXTENSIONS | AUDIO_EXTENSIONS}"
-        )
+        raise ValueError(f"Unsupported file format for {input_path}. Supported formats: {VIDEO_EXTENSIONS | AUDIO_EXTENSIONS}")
 
     # Determine output path
     if args.output:
@@ -1294,9 +1332,7 @@ def process_directory(args):
 def main():
     """Main function to process audio/video file and zero out voice segments."""
     try:
-        parser = argparse.ArgumentParser(
-            description="Remove voice segments from audio or video files using pyannote.audio and ffmpeg"
-        )
+        parser = argparse.ArgumentParser(description="Remove voice segments from audio or video files using pyannote.audio and ffmpeg")
 
         subparsers = parser.add_subparsers(dest="mode", help="Processing mode")
 
@@ -1315,20 +1351,15 @@ def main():
         edit_parser.add_argument(
             "--effect-labels",
             nargs="+",
-            help="Labels to apply effects to (e.g., speaking conversation). "
-            "For backward compatibility, use 'speaking' and 'conversation' to mute audio only.",
+            help="Labels to apply effects to (e.g., speaking conversation). For backward compatibility, use 'speaking' and 'conversation' to mute audio only.",
         )
 
         # --- Apply-effects command ---
         effects_parser = subparsers.add_parser("apply-effects", help="Apply effects to specific time ranges")
         effects_parser.add_argument("input_path", help="Path to input media file")
-        effects_parser.add_argument(
-            "time_ranges", nargs="+", help="Time ranges to apply effects to (e.g., '1:30-2:45' '5:00-5:30')"
-        )
+        effects_parser.add_argument("time_ranges", nargs="+", help="Time ranges to apply effects to (e.g., '1:30-2:45' '5:00-5:30')")
         effects_parser.add_argument("-o", "--output", help="Path for output file (default: input_filename_effects.ext)")
-        effects_parser.add_argument(
-            "--effect", default="all", choices=["black", "mute", "all"], help="Type of effect to apply (default: all)"
-        )
+        effects_parser.add_argument("--effect", default="all", choices=["black", "mute", "all"], help="Type of effect to apply (default: all)")
 
         # --- Debug command ---
         debug_parser = subparsers.add_parser("debug-encoding", help="Debug file encoding issues")
