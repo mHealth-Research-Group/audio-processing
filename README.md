@@ -1,76 +1,168 @@
-# Audio/Video Processing Tool
+# Audio Processing Pipeline
 
-This tool uses AI-powered speaker detection to apply effects to media files. It's designed for a two-pass workflow:
+This project provides a multi-step pipeline for processing video and audio files. It is designed to merge multiple video files, detect and label gaps, analyze audio for speaker segments, and allow for manual adjustments to the timeline.
 
-1.  **First Pass:** Automatically detect speech and generate an edited media file with muted conversations, along with a JSON timeline file.
-2.  **Second Pass:** Manually edit the JSON timeline to customize effects (e.g., black out video segments), then apply these changes to create a final version.
+## Features
+
+- **Video Merging**: Merges multiple video files in a directory into a single video.
+- **Gap Detection**: Detects gaps between video files and fills them with black video.
+- **Audio Analysis**: Uses `pyannote.audio` to perform voice activity detection and speaker diarization.
+- **Manual Adjustments**: Allows for manual adjustments to the audio and video timeline.
+- **Comprehensive Labeling**: Generates a comprehensive label file that can be used with annotation tools like Signaligner.
 
 ## Installation
 
-### Prerequisites
-
-- Python 3.11 or higher
-- FFmpeg installed and available in your system's PATH
-- A Hugging Face account and an access token
-
-### Setup
-
 1.  **Clone the repository:**
+
     ```bash
-    git clone <repository-url>
+    git clone git@github.com:mHealth-Research-Group/audio-processing.git
     cd audio-processing
     ```
 
 2.  **Install dependencies:**
+
+    This project uses `uv` for dependency management. To install the required packages, run:
+
     ```bash
     uv sync
     ```
 
-3.  **Configure your Hugging Face access token:**
-    Create a `.env` file in the root of the project and add your token:
+3.  **Set up environment variables:**
+
+    This project requires a Hugging Face access token to download the `pyannote/segmentation-3.0` model. Create a `.env` file in the root of the project and add your token:
+
     ```
-    HUGGINGFACE_ACCESS_TOKEN=your_token_here
+    HUGGINGFACE_ACCESS_TOKEN="your-hugging-face-token"
     ```
 
 ## Usage
 
-### Pass 1: Generate Timeline and Initial Muted File
+The pipeline is designed to minimize user effort. Simply provide a folder of videos, the pipeline processes everything automatically, then you make manual adjustments and apply the final processing.
 
-This command processes your media file, mutes all detected speech, and creates a `_timeline.json` file.
+### Streamlined Workflow: Processing a Directory of Videos
 
-```bash
-# Process a single file
-uv run main.py process your_video.mp4 --generate-timeline
+This example shows the recommended workflow for processing a directory of videos with minimal effort.
 
-# Process all files in a directory
-uv run main.py process /path/to/your/media/ --generate-timeline
-```
+**Step 1: Process Videos (Automated - Steps 1-3)**
 
-### Pass 2: Apply Manual Edits from JSON
-
-After the first pass, you can manually edit the `_timeline.json` file. Change the `label` of any segment to `black` or `all` to apply different effects.
-
--   `"label": "speaking"` or `"label": "conversation"` (default): Mutes audio.
--   `"label": "black"`: Blacks out the video but preserves audio.
--   `"label": "all"`: Mutes audio and blacks out the video.
-
-Once you've saved your changes to the JSON file, run the `apply-edits` command:
+This single command merges all videos, analyzes audio, and prepares the adjustment file:
 
 ```bash
-# Apply the edits from the timeline files in the current directory
-uv run main.py apply-edits .
+uv run python main.py pipeline full test_videos -w pipeline_test
 ```
 
-This will create a new, final edited file with the `_edited` suffix.
+This command will:
+- Merge all video files in the `test_videos` directory into `merged_video.mp4`
+- Detect gaps between videos and create metadata
+- Extract and analyze audio for voice activity and speaker detection
+- Create a `merged_video_timeline_manual_adjustments.json` file for manual review
 
-### Applying Effects to Specific Time Ranges
+**Step 2: Manual Review (Human Input Required)**
 
-If you already know the exact time ranges you want to modify, you can use the `apply-effects` command for a faster, single-pass workflow:
+Open the generated adjustment file and review/modify the timeline:
 
 ```bash
-# Black out video from 1:30 to 2:45
-uv run main.py apply-effects your_video.mp4 "1:30-2:45" --effect black
-
-# Mute audio in multiple segments
-uv run main.py apply-effects your_video.mp4 "0:30-1:00" "3:15-4:30" --effect mute
+# Edit this file to make your adjustments:
+# pipeline_test/merged_video_timeline_manual_adjustments.json
 ```
+
+- Review the timeline segments and their labels
+- Change labels to control effects:
+  - `"speaking"` or `"conversation"`: Mute audio only
+  - `"black"`: Black out video but preserve audio  
+  - `"all"`: Mute audio AND black out video
+  - `"silence"`: No effects applied
+- Add custom time ranges if needed
+- **Important**: Change `"manual_review_completed": false` to `true` when done
+
+**Step 3: Apply Final Adjustments**
+
+Apply your manual adjustments to create the final processed video:
+
+```bash
+uv run python main.py pipeline step4 -w pipeline_test
+```
+
+This creates:
+- `pipeline_test/merged_video_final.mp4`: The final processed video
+- `pipeline_test/merged_video_final_comprehensive_labels.csv`: Labels for annotation tools
+
+### Check Pipeline Status
+
+To check the current status of your pipeline at any time:
+
+```bash
+uv run python main.py pipeline status -w pipeline_test
+```
+
+## Pipeline Steps in Detail
+
+### `full` (Recommended)
+
+Runs the complete automated pipeline through step 3. This is the recommended approach for most users.
+
+- First argument: Path to the directory containing the video files
+- `-w, --working-dir`: Working directory for pipeline files (default: `./pipeline_work`)
+- `-o, --output`: Output path for merged video (optional)
+- `--min-duration-on`: Minimum duration for speech regions (in seconds, default: 0.1)
+- `--min-duration-off`: Minimum duration for non-speech regions (in seconds, default: 0.1)
+
+### `step4`
+
+Applies manual adjustments to create the final video. This is the second command you run after manual review.
+
+- `-w, --working-dir`: Working directory for pipeline files
+- `--output-suffix`: Suffix for final output files (default: `_final`)
+
+### `status`
+
+Shows the current pipeline status and file locations.
+
+- `-w, --working-dir`: Working directory for pipeline files
+
+### Individual Steps (Advanced)
+
+For advanced users who need granular control:
+
+#### `step1`
+
+Merges video files in a directory with gap detection.
+
+- First argument: Path to the directory containing the video files
+- `-w, --working-dir`: Working directory for pipeline files (default: `./pipeline_work`)
+- `-o, --output`: Output path for merged video (optional)
+
+#### `step2`
+
+Processes the audio in the merged video file.
+
+- `-w, --working-dir`: Working directory for pipeline files
+- `--min-duration-on`: Minimum duration for speech regions (in seconds, default: 0.1)
+- `--min-duration-off`: Minimum duration for non-speech regions (in seconds, default: 0.1)
+
+#### `step3`
+
+Prepares a file for manual adjustments.
+
+- `-w, --working-dir`: Working directory for pipeline files
+
+## Label File Format
+
+The pipeline generates a comprehensive label file in CSV format with the following columns:
+
+- `START_TIME`: Start timestamp in "YYYY-MM-DD HH:MM:SS.sss" format
+- `STOP_TIME`: Stop timestamp in "YYYY-MM-DD HH:MM:SS.sss" format  
+- `PREDICTION`: Label type (e.g., "Speaking", "Conversation", "Silence", "Missing_Video")
+- `SOURCE`: Always "Player"
+- `LABELSET`: Always "DEFAULT"
+
+Example CSV content:
+
+```csv
+START_TIME,STOP_TIME,PREDICTION,SOURCE,LABELSET
+2019-06-19 16:10:06.400,2019-06-19 23:49:53.600,Silence,Player,DEFAULT
+2019-06-19 23:49:53.600,2019-06-20 06:36:43.200,Speaking,Player,DEFAULT
+2019-06-20 06:36:43.200,2019-06-21 00:32:40.000,Conversation,Player,DEFAULT
+```
+
+This CSV file can be used with annotation tools like [Signaligner](https://https://signaligner.org/) to visualize and edit the timeline.

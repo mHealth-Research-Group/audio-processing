@@ -22,9 +22,12 @@ if sys.platform.startswith("win"):
     # Set console encoding to UTF-8 for Windows
     try:
         # For Python 3.7+
-        sys.stdout.reconfigure(encoding="utf-8")
-        sys.stderr.reconfigure(encoding="utf-8")
-    except AttributeError:
+        if hasattr(sys.stdout, "reconfigure"):
+            getattr(sys.stdout, "reconfigure")(encoding="utf-8")
+            getattr(sys.stderr, "reconfigure")(encoding="utf-8")
+        else:
+            raise AttributeError("reconfigure not available")
+    except (AttributeError, TypeError):
         # For older Python versions
         import codecs
 
@@ -238,8 +241,8 @@ def analyze_speaker_segments_direct(audio_path, model, chunk_duration=10.0):
 
                 # Run model inference with GPU acceleration
                 with torch.no_grad():
-                    if DEVICE.type == "cuda":
-                        with torch.amp.autocast("cuda"):
+                    if DEVICE.type == "cuda" and hasattr(torch, "cuda") and hasattr(torch.cuda, "amp"):
+                        with torch.cuda.amp.autocast():
                             powerset_output = model(batch)
                             multilabel_output = to_multilabel(powerset_output)
                     else:
@@ -268,11 +271,13 @@ def analyze_speaker_segments_direct(audio_path, model, chunk_duration=10.0):
                             if num_speakers > 1:
                                 frame_start = chunk_start_time + frame_idx * frame_duration
                                 frame_end = frame_start + frame_duration
-                                speaker_segments.append({
-                                    "start": frame_start,
-                                    "end": frame_end,
-                                    "num_speakers": num_speakers.item(),
-                                })
+                                speaker_segments.append(
+                                    {
+                                        "start": frame_start,
+                                        "end": frame_end,
+                                        "num_speakers": num_speakers.item(),
+                                    }
+                                )
 
                 # Clear batch for next iteration
                 chunks = []
@@ -406,8 +411,8 @@ def generate_speaker_timeline(audio_path, model, min_duration_on=0.1, min_durati
 
                 # Run model inference with GPU acceleration
                 with torch.no_grad():
-                    if DEVICE.type == "cuda":
-                        with torch.amp.autocast("cuda"):
+                    if DEVICE.type == "cuda" and hasattr(torch, "cuda") and hasattr(torch.cuda, "amp"):
+                        with torch.cuda.amp.autocast():
                             powerset_output = model(batch)
                             multilabel_output = to_multilabel(powerset_output)
                     else:
@@ -425,11 +430,13 @@ def generate_speaker_timeline(audio_path, model, min_duration_on=0.1, min_durati
                     for frame_idx, num_speakers in enumerate(active_speakers_per_frame):
                         frame_start = chunk_start_time + (frame_idx * chunk_duration / frames_per_chunk)
                         frame_end = min(frame_start + (chunk_duration / frames_per_chunk), total_duration)
-                        speaker_counts_timeline.append({
-                            "start": frame_start,
-                            "end": frame_end,
-                            "speaker_count": num_speakers.item(),
-                        })
+                        speaker_counts_timeline.append(
+                            {
+                                "start": frame_start,
+                                "end": frame_end,
+                                "speaker_count": num_speakers.item(),
+                            }
+                        )
 
                 # Clear batch for next iteration
                 chunks = []
@@ -488,27 +495,33 @@ def generate_speaker_timeline(audio_path, model, min_duration_on=0.1, min_durati
             }
 
             if not voice_active:
-                base_segment.update({
-                    "type": "silence",
-                    "speakers": 0,
-                    "label": "silence",
-                })
+                base_segment.update(
+                    {
+                        "type": "silence",
+                        "speakers": 0,
+                        "label": "silence",
+                    }
+                )
                 return base_segment
 
             speaker_count = max(get_speaker_count_at_time(start), get_speaker_count_at_time(end))
 
             if overlapped or speaker_count > 1:
-                base_segment.update({
-                    "type": "speech",
-                    "speakers": max(speaker_count, 2),
-                    "label": "conversation",
-                })
+                base_segment.update(
+                    {
+                        "type": "speech",
+                        "speakers": max(speaker_count, 2),
+                        "label": "conversation",
+                    }
+                )
             else:
-                base_segment.update({
-                    "type": "speech",
-                    "speakers": max(speaker_count, 1),
-                    "label": "speaking",
-                })
+                base_segment.update(
+                    {
+                        "type": "speech",
+                        "speakers": max(speaker_count, 1),
+                        "label": "speaking",
+                    }
+                )
             return base_segment
 
         # Process events to create timeline
@@ -569,7 +582,9 @@ def generate_speaker_timeline(audio_path, model, min_duration_on=0.1, min_durati
             "total_speaking_time": seconds_to_mmss(total_speaking_time),
             "total_silence_time": seconds_to_mmss(total_silence_time),
             "speech_percentage": round((total_speech_time / total_duration) * 100, 1) if total_duration > 0 else 0,
-            "conversation_percentage": round((total_conversation_time / total_duration) * 100, 1) if total_duration > 0 else 0,
+            "conversation_percentage": round((total_conversation_time / total_duration) * 100, 1)
+            if total_duration > 0
+            else 0,
             "has_multiple_speakers": has_multiple_speakers,
             "num_segments": len(timeline),
         }
@@ -764,6 +779,9 @@ EFFECT_CONFIGS = {
     "black": {"mute_audio": False, "black_video": True},  # Black video but preserve audio
     "mute": {"mute_audio": True, "black_video": False},  # Mute audio only
     "all": {"mute_audio": True, "black_video": True},  # Remove both voice and video
+    "video_gap": {"mute_audio": False, "black_video": True},  # Missing video periods (black out)
+    "manual_black": {"mute_audio": False, "black_video": True},  # Manual video blanking
+    "manual_remove": {"mute_audio": True, "black_video": True},  # Manual audio and video removal
 }
 
 
@@ -800,7 +818,9 @@ def extract_segments_by_effects(timeline_data, target_effects=None):
 
         # Skip if target_effects specified and this segment doesn't match
         if target_effects is not None:
-            if effects["mute_audio"] != target_effects.get("mute_audio", False) or effects["black_video"] != target_effects.get("black_video", False):
+            if effects["mute_audio"] != target_effects.get("mute_audio", False) or effects[
+                "black_video"
+            ] != target_effects.get("black_video", False):
                 continue
 
         start_seconds = mmss_to_seconds(segment["start"])
@@ -1050,7 +1070,11 @@ def apply_timeline_edits(directory, output_suffix="_edited", effect_labels=None)
         effect_segments = extract_segments_by_effects(timeline_data)
 
         # Count total segments with effects
-        total_effect_segments = len(effect_segments["mute_only"]) + len(effect_segments["black_only"]) + len(effect_segments["mute_and_black"])
+        total_effect_segments = (
+            len(effect_segments["mute_only"])
+            + len(effect_segments["black_only"])
+            + len(effect_segments["mute_and_black"])
+        )
 
         print(f"  Found {total_effect_segments} segments with effects to apply")
 
@@ -1151,7 +1175,9 @@ def _handle_speaker_and_timeline_analysis(args, input_path, model):
             print(f"   Multiple speakers detected: {'✓ YES' if speaker_analysis['has_multiple_speakers'] else '✗ NO'}")
             print(f"   Maximum speakers detected: {speaker_analysis['max_speakers_detected']}")
             print(f"   Confidence score: {speaker_analysis['confidence_score']:.2f}")
-            print(f"   Multi-speaker chunks: {speaker_analysis['multi_speaker_chunks']}/{speaker_analysis['total_chunks']}")
+            print(
+                f"   Multi-speaker chunks: {speaker_analysis['multi_speaker_chunks']}/{speaker_analysis['total_chunks']}"
+            )
             if speaker_analysis["speaker_segments"]:
                 print(f"   Multi-speaker segments: {len(speaker_analysis['speaker_segments'])} segments")
         else:
@@ -1226,7 +1252,9 @@ def process_single_file(args):
     is_audio = is_audio_file(input_path)
 
     if not (is_video or is_audio):
-        raise ValueError(f"Unsupported file format for {input_path}. Supported formats: {VIDEO_EXTENSIONS | AUDIO_EXTENSIONS}")
+        raise ValueError(
+            f"Unsupported file format for {input_path}. Supported formats: {VIDEO_EXTENSIONS | AUDIO_EXTENSIONS}"
+        )
 
     # Determine output path
     if args.output:
@@ -1345,7 +1373,9 @@ def process_directory(args):
 def main():
     """Main function to process audio/video file and zero out voice segments."""
     try:
-        parser = argparse.ArgumentParser(description="Remove voice segments from audio or video files using pyannote.audio and ffmpeg")
+        parser = argparse.ArgumentParser(
+            description="Remove voice segments from audio or video files using pyannote.audio and ffmpeg"
+        )
 
         subparsers = parser.add_subparsers(dest="mode", help="Processing mode")
 
@@ -1370,9 +1400,19 @@ def main():
         # --- Apply-effects command ---
         effects_parser = subparsers.add_parser("apply-effects", help="Apply effects to specific time ranges")
         effects_parser.add_argument("input_path", help="Path to input media file")
-        effects_parser.add_argument("time_ranges", nargs="+", help="Time ranges to apply effects to (e.g., '1:30-2:45' '5:00-5:30')")
+        effects_parser.add_argument(
+            "time_ranges", nargs="+", help="Time ranges to apply effects to (e.g., '1:30-2:45' '5:00-5:30')"
+        )
         effects_parser.add_argument("-o", "--output", help="Path for output file (default: input_filename_effects.ext)")
-        effects_parser.add_argument("--effect", default="all", choices=["black", "mute", "all"], help="Type of effect to apply (default: all)")
+        effects_parser.add_argument(
+            "--effect", default="all", choices=["black", "mute", "all"], help="Type of effect to apply (default: all)"
+        )
+
+        # --- Pipeline command ---
+        pipeline_parser = subparsers.add_parser("pipeline", help="Multi-step video and audio processing pipeline")
+        from pipeline import add_pipeline_arguments
+
+        add_pipeline_arguments(pipeline_parser)
 
         # --- Debug command ---
         debug_parser = subparsers.add_parser("debug-encoding", help="Debug file encoding issues")
@@ -1380,7 +1420,13 @@ def main():
 
         # --- Backward compatibility: if no subcommand, assume 'process' ---
         args_list = sys.argv[1:]
-        if not args_list or args_list[0] not in ["process", "apply-edits", "apply-effects", "debug-encoding"]:
+        if not args_list or args_list[0] not in [
+            "process",
+            "apply-edits",
+            "apply-effects",
+            "pipeline",
+            "debug-encoding",
+        ]:
             # If input looks like a file/dir path, prepend 'process'
             if args_list and (Path(args_list[0]).exists() or Path(args_list[0]).is_dir()):
                 args_list.insert(0, "process")
@@ -1433,6 +1479,11 @@ def main():
             except Exception as e:
                 print(f"Error applying effects: {e}", file=sys.stderr)
                 return 1
+
+        elif args.mode == "pipeline":
+            from pipeline import execute_pipeline_command
+
+            return execute_pipeline_command(args)
 
         elif args.mode == "debug-encoding":
             file_path = Path(args.file_path)
