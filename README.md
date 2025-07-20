@@ -8,6 +8,7 @@ This project provides a multi-step pipeline for processing video and audio files
 - **Gap Detection**: Detects gaps between video files and fills them with black video.
 - **Audio Analysis**: Uses `pyannote.audio` to perform voice activity detection and speaker diarization.
 - **Manual Adjustments**: Allows for manual adjustments to the audio and video timeline.
+- **Video Compression**: Compress videos to 720p or 480p resolution for faster processing and smaller file sizes.
 - **Comprehensive Labeling**: Generates a comprehensive label file that can be used with annotation tools like Signaligner.
 
 ## Installation
@@ -139,6 +140,30 @@ Processes the audio in the merged video file.
 - `-w, --working-dir`: Working directory for pipeline files
 - `--min-duration-on`: Minimum duration for speech regions (in seconds, default: 0.1)
 - `--min-duration-off`: Minimum duration for non-speech regions (in seconds, default: 0.1)
+
+## Video Compression
+
+The system supports video compression to reduce file sizes and speed up processing. Compression can be applied to any video processing command:
+
+### Available Resolutions
+
+- `--compress 720p`: Compress video to 720p (1280x720) while maintaining aspect ratio
+- `--compress 480p`: Compress video to 480p (854x480) while maintaining aspect ratio
+
+### Usage Examples
+
+```bash
+# Process video with compression
+uv run python main.py process video.mp4 --compress 720p
+
+# Apply effects with compression  
+uv run python main.py apply-effects video.mp4 1:30-2:45 --effect mute --compress 480p
+
+# Compression-only mode (no voice processing)
+uv run python main.py process video.mp4 --speaker-analysis-only --compress 720p
+```
+
+**Note**: Compression is only available for video files. Audio files will ignore the compression option.
 
 #### `step3`
 

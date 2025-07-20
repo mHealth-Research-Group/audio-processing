@@ -728,7 +728,7 @@ def parse_single_time(time_str):
         return float(time_str)
 
 
-def apply_effects_to_time_ranges(input_path, output_path, time_ranges, effect_type="all"):
+def apply_effects_to_time_ranges(input_path, output_path, time_ranges, effect_type="all", compress_resolution=None):
     """
     Apply effects to specific time ranges without needing a timeline file.
 
@@ -737,6 +737,7 @@ def apply_effects_to_time_ranges(input_path, output_path, time_ranges, effect_ty
         output_path: Path for output media file
         time_ranges: List of time range strings (e.g., ["1:30-2:45", "5:00-5:30"])
         effect_type: Type of effect to apply ("black", "mute", "all", "hide")
+        compress_resolution: Target resolution for compression ("480p", "720p", or None)
     """
     # Parse time ranges into segments
     segments = []
@@ -768,7 +769,7 @@ def apply_effects_to_time_ranges(input_path, output_path, time_ranges, effect_ty
         return
 
     # Apply the effects
-    process_media_with_effects(input_path, output_path, effect_segments)
+    process_media_with_effects(input_path, output_path, effect_segments, compress_resolution)
 
 
 # Effect configuration for different labels
@@ -878,22 +879,60 @@ def create_video_filter(black_segments):
     return ",".join(filter_parts)
 
 
-def process_media_with_effects(input_path, output_path, effect_segments):
+def get_compression_params(compress_resolution):
     """
-    Process media file with flexible effects (audio muting, video blacking, or both).
+    Get ffmpeg parameters for video compression based on target resolution.
+
+    Args:
+        compress_resolution: Target resolution ("480p" or "720p") or None for no compression
+
+    Returns:
+        dict: Contains video codec parameters for ffmpeg
+    """
+    if compress_resolution == "480p":
+        return {
+            "scale": "scale=-2:480",  # Keep aspect ratio, height 480
+            "codec": "libx264",
+            "preset": "fast",
+            "crf": "23",  # Good quality/size balance
+            "profile": "main",
+            "level": "3.1"
+        }
+    elif compress_resolution == "720p":
+        return {
+            "scale": "scale=-2:720",  # Keep aspect ratio, height 720
+            "codec": "libx264",
+            "preset": "fast",
+            "crf": "21",  # Slightly better quality for 720p
+            "profile": "main",
+            "level": "3.1"
+        }
+    else:
+        return None
+
+
+def process_media_with_effects(input_path, output_path, effect_segments, compress_resolution=None):
+    """
+    Process media file with flexible effects (audio muting, video blacking, or both) and optional compression.
 
     Args:
         input_path: Path to input media file
         output_path: Path for output media file
         effect_segments: Dict with effect segments from extract_segments_by_effects()
+        compress_resolution: Target resolution for compression ("480p", "720p", or None)
     """
+    # Check if compression is requested for audio file
+    if compress_resolution and not is_video_file(input_path):
+        print("Warning: Compression is only supported for video files. Ignoring compression option.")
+        compress_resolution = None
+
     # Combine all segments that need effects
     all_mute_segments = effect_segments["mute_only"] + effect_segments["mute_and_black"]
     all_black_segments = effect_segments["black_only"] + effect_segments["mute_and_black"]
 
     # Check if any effects need to be applied
-    if not all_mute_segments and not all_black_segments:
-        print("No effects to apply. Copying original file.")
+    if not all_mute_segments and not all_black_segments and not compress_resolution:
+        print("No effects or compression to apply. Copying original file.")
         subprocess.run(
             ["ffmpeg", "-i", str(input_path), "-c", "copy", str(output_path), "-y"],
             check=True,
@@ -904,15 +943,40 @@ def process_media_with_effects(input_path, output_path, effect_segments):
     audio_filter = create_audio_filter(all_mute_segments)
     video_filter = create_video_filter(all_black_segments)
 
+    # Get compression parameters
+    compression_params = get_compression_params(compress_resolution)
+
     # Build ffmpeg command
     ffmpeg_cmd = ["ffmpeg", "-i", str(input_path)]
 
-    # Add video filter if needed
+    # Build video filter chain
+    video_filter_parts = []
     if video_filter:
-        ffmpeg_cmd.extend(["-vf", video_filter])
-        ffmpeg_cmd.extend(["-c:v", "libx264", "-preset", "fast"])  # Re-encode video when filtering
+        video_filter_parts.append(video_filter)
+    
+    # Add scaling filter for compression
+    if compression_params and compression_params["scale"]:
+        video_filter_parts.append(compression_params["scale"])
+
+    # Add combined video filter if needed
+    if video_filter_parts:
+        ffmpeg_cmd.extend(["-vf", ",".join(video_filter_parts)])
+
+    # Add video codec parameters
+    if video_filter or compression_params:
+        # Re-encode video when filtering or compressing
+        codec = compression_params["codec"] if compression_params else "libx264"
+        preset = compression_params["preset"] if compression_params else "fast"
+        ffmpeg_cmd.extend(["-c:v", codec, "-preset", preset])
+        
+        if compression_params:
+            ffmpeg_cmd.extend(["-crf", compression_params["crf"]])
+            ffmpeg_cmd.extend(["-profile:v", compression_params["profile"]])
+            ffmpeg_cmd.extend(["-level", compression_params["level"]])
+            # Ensure compatibility
+            ffmpeg_cmd.extend(["-pix_fmt", "yuv420p"])
     else:
-        ffmpeg_cmd.extend(["-c:v", "copy"])  # Copy video stream if no video effects
+        ffmpeg_cmd.extend(["-c:v", "copy"])  # Copy video stream if no video effects or compression
 
     # Add audio filter if needed
     if audio_filter:
@@ -929,12 +993,19 @@ def process_media_with_effects(input_path, output_path, effect_segments):
         effects_applied.append(f"mute {len(all_mute_segments)} segments")
     if all_black_segments:
         effects_applied.append(f"black {len(all_black_segments)} segments")
+    if compress_resolution:
+        effects_applied.append(f"compress to {compress_resolution}")
 
-    print(f"Processing media with effects: {', '.join(effects_applied)}")
-    if all_mute_segments:
-        print(f"Mute segments: {all_mute_segments}")
-    if all_black_segments:
-        print(f"Black segments: {all_black_segments}")
+    if effects_applied:
+        print(f"Processing media with effects: {', '.join(effects_applied)}")
+        if all_mute_segments:
+            print(f"Mute segments: {all_mute_segments}")
+        if all_black_segments:
+            print(f"Black segments: {all_black_segments}")
+        if compress_resolution:
+            print(f"Compressing video to {compress_resolution}")
+    else:
+        print("Processing media (compression only)")
 
     # Run ffmpeg
     subprocess.run(ffmpeg_cmd, check=True)
@@ -1091,7 +1162,7 @@ def apply_timeline_edits(directory, output_suffix="_edited", effect_labels=None)
 
         try:
             print("  Processing media file...")
-            process_media_with_effects(media_path, output_path, effect_segments)
+            process_media_with_effects(media_path, output_path, effect_segments, None)
             print(f"✓ Created edited file: {output_path.name}")
 
         except Exception as e:
@@ -1151,6 +1222,11 @@ def add_process_arguments(parser):
     parser.add_argument(
         "--timeline-output",
         help="Path for timeline JSON file (default: input_filename_timeline.json). For directory processing, this is a directory.",
+    )
+    parser.add_argument(
+        "--compress",
+        choices=["480p", "720p"],
+        help="Compress video to lower resolution for faster processing and smaller file size",
     )
 
 
@@ -1300,17 +1376,26 @@ def process_single_file(args):
 
             # --- Processing ---
             if not args.speaker_analysis_only:
-                if not voice_segments:
+                if not voice_segments and not args.compress:
                     print(f"No voice segments detected in {input_path.name}. File not modified.")
+                elif not voice_segments and args.compress:
+                    # Compression-only mode
+                    effect_segments = {"mute_only": [], "black_only": [], "mute_and_black": []}
+                    if is_video:
+                        print(f"🎬 Compressing video: {input_path.name}...")
+                        process_media_with_effects(input_path, output_path, effect_segments, args.compress)
+                        print(f"✓ Video compression complete: {output_path}")
+                    else:
+                        print(f"Compression not applicable to audio files: {input_path.name}")
                 else:
                     effect_segments = {"mute_only": voice_segments, "black_only": [], "mute_and_black": []}
                     if is_video:
                         print(f"🎬 Processing video: {input_path.name}...")
-                        process_media_with_effects(input_path, output_path, effect_segments)
+                        process_media_with_effects(input_path, output_path, effect_segments, args.compress)
                         print(f"✓ Video processing complete: {output_path}")
                     else:
                         print(f"🎵 Processing audio: {input_path.name}...")
-                        process_media_with_effects(input_path, output_path, effect_segments)
+                        process_media_with_effects(input_path, output_path, effect_segments, args.compress)
                         print(f"✓ Audio processing complete: {output_path}")
 
         finally:
@@ -1407,6 +1492,11 @@ def main():
         effects_parser.add_argument(
             "--effect", default="all", choices=["black", "mute", "all"], help="Type of effect to apply (default: all)"
         )
+        effects_parser.add_argument(
+            "--compress",
+            choices=["480p", "720p"],
+            help="Compress video to lower resolution for faster processing and smaller file size",
+        )
 
         # --- Pipeline command ---
         pipeline_parser = subparsers.add_parser("pipeline", help="Multi-step video and audio processing pipeline")
@@ -1473,7 +1563,7 @@ def main():
             try:
                 print(f"Applying {args.effect} effects to {len(args.time_ranges)} time ranges...")
                 print(f"Time ranges: {', '.join(args.time_ranges)}")
-                apply_effects_to_time_ranges(input_path, output_path, args.time_ranges, args.effect)
+                apply_effects_to_time_ranges(input_path, output_path, args.time_ranges, args.effect, args.compress)
                 print(f"✓ Effects applied successfully: {output_path}")
                 return 0
             except Exception as e:

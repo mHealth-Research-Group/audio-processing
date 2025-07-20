@@ -356,7 +356,7 @@ class ProcessingPipeline:
 
         # Apply effects to video
         print("Applying effects to create final video...")
-        process_media_with_effects(self.merged_video_path, final_video_path, effect_segments)
+        process_media_with_effects(self.merged_video_path, final_video_path, effect_segments, None)
 
         # Create comprehensive final labels
         final_labels = self._create_comprehensive_labels(adjustments, effect_segments)
