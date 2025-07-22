@@ -12,6 +12,7 @@ dependencies = [
     "numpy<2.3",
     "pandas>=2.3.0",
     "pyannote-audio>=3.3.2",
+    "pytest>=8.4.1",
     "python-dotenv>=1.1.1",
     "torchaudio>=2.7.1",
     "transformers>=4.53.0",

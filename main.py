@@ -7,7 +7,6 @@ import argparse
 import subprocess
 from pathlib import Path
 from dotenv import load_dotenv
-import tempfile
 import torch
 import json
 import sys
@@ -60,7 +59,6 @@ def load_model():
     if DEVICE.type == "cuda":
         torch.backends.cudnn.benchmark = True
         torch.backends.cudnn.deterministic = False
-        # Enable TensorFloat-32 (TF32) for better performance on Ampere GPUs
         torch.backends.cuda.matmul.allow_tf32 = True
         torch.backends.cudnn.allow_tf32 = True
 
@@ -242,7 +240,7 @@ def analyze_speaker_segments_direct(audio_path, model, chunk_duration=10.0):
                 # Run model inference with GPU acceleration
                 with torch.no_grad():
                     if DEVICE.type == "cuda" and hasattr(torch, "cuda") and hasattr(torch.cuda, "amp"):
-                        with torch.cuda.amp.autocast():
+                        with torch.autocast(device_type="cuda"):
                             powerset_output = model(batch)
                             multilabel_output = to_multilabel(powerset_output)
                     else:
@@ -412,7 +410,7 @@ def generate_speaker_timeline(audio_path, model, min_duration_on=0.1, min_durati
                 # Run model inference with GPU acceleration
                 with torch.no_grad():
                     if DEVICE.type == "cuda" and hasattr(torch, "cuda") and hasattr(torch.cuda, "amp"):
-                        with torch.cuda.amp.autocast():
+                        with torch.autocast(device_type="cuda"):
                             powerset_output = model(batch)
                             multilabel_output = to_multilabel(powerset_output)
                     else:
@@ -896,7 +894,7 @@ def get_compression_params(compress_resolution):
             "preset": "fast",
             "crf": "23",  # Good quality/size balance
             "profile": "main",
-            "level": "3.1"
+            "level": "3.1",
         }
     elif compress_resolution == "720p":
         return {
@@ -905,7 +903,7 @@ def get_compression_params(compress_resolution):
             "preset": "fast",
             "crf": "21",  # Slightly better quality for 720p
             "profile": "main",
-            "level": "3.1"
+            "level": "3.1",
         }
     else:
         return None
@@ -946,14 +944,23 @@ def process_media_with_effects(input_path, output_path, effect_segments, compres
     # Get compression parameters
     compression_params = get_compression_params(compress_resolution)
 
-    # Build ffmpeg command
-    ffmpeg_cmd = ["ffmpeg", "-i", str(input_path)]
+    # Build ffmpeg command with performance optimizations
+    ffmpeg_cmd = [
+        "ffmpeg",
+        "-hide_banner",  # Hide ffmpeg banner to reduce console output
+        "-loglevel",
+        "warning",  # Only show warnings and errors
+        "-threads",
+        "0",  # Use all available CPU cores
+        "-i",
+        str(input_path),
+    ]
 
     # Build video filter chain
     video_filter_parts = []
     if video_filter:
         video_filter_parts.append(video_filter)
-    
+
     # Add scaling filter for compression
     if compression_params and compression_params["scale"]:
         video_filter_parts.append(compression_params["scale"])
@@ -962,13 +969,24 @@ def process_media_with_effects(input_path, output_path, effect_segments, compres
     if video_filter_parts:
         ffmpeg_cmd.extend(["-vf", ",".join(video_filter_parts)])
 
-    # Add video codec parameters
+    # Add video codec parameters with optimizations
     if video_filter or compression_params:
         # Re-encode video when filtering or compressing
         codec = compression_params["codec"] if compression_params else "libx264"
         preset = compression_params["preset"] if compression_params else "fast"
         ffmpeg_cmd.extend(["-c:v", codec, "-preset", preset])
-        
+
+        # Add performance optimizations for x264
+        if codec == "libx264":
+            ffmpeg_cmd.extend(
+                [
+                    "-x264-params",
+                    "threads=0",  # Use all threads for x264
+                    "-movflags",
+                    "+faststart",  # Optimize for streaming/web playback
+                ]
+            )
+
         if compression_params:
             ffmpeg_cmd.extend(["-crf", compression_params["crf"]])
             ffmpeg_cmd.extend(["-profile:v", compression_params["profile"]])
@@ -1007,8 +1025,18 @@ def process_media_with_effects(input_path, output_path, effect_segments, compres
     else:
         print("Processing media (compression only)")
 
-    # Run ffmpeg
-    subprocess.run(ffmpeg_cmd, check=True)
+    # Run ffmpeg with better error handling
+    try:
+        print(f"Running ffmpeg command: {' '.join(ffmpeg_cmd)}")
+        result = subprocess.run(ffmpeg_cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            print(f"❌ FFmpeg failed with return code {result.returncode}")
+            print(f"Error output: {result.stderr}")
+            raise subprocess.CalledProcessError(result.returncode, ffmpeg_cmd, result.stderr)
+        print("✅ FFmpeg processing completed successfully")
+    except subprocess.CalledProcessError:
+        print("❌ FFmpeg command failed. Check the error messages above.")
+        raise
 
 
 def is_video_file(file_path):
@@ -1028,11 +1056,43 @@ def extract_audio_from_video(video_path, audio_path):
     Args:
         video_path: Path to input video file
         audio_path: Path for extracted audio file
+
+    Returns:
+        bool: True if audio was extracted successfully, False if no audio stream exists
     """
     print(f"Extracting audio from video: {video_path}")
 
+    # First check if the video has an audio stream
+    check_cmd = [
+        "ffprobe",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-select_streams",
+        "a",
+        "-show_entries",
+        "stream=codec_type",
+        "-of",
+        "csv=p=0",
+        str(video_path),
+    ]
+
+    try:
+        result = subprocess.run(check_cmd, capture_output=True, text=True)
+        if result.returncode != 0 or not result.stdout.strip():
+            print(f"⚠️  No audio stream found in {video_path}")
+            return False
+
+    except subprocess.CalledProcessError:
+        # If ffprobe fails, try to extract anyway
+        pass
+
+    # Try to extract audio normally
     ffmpeg_cmd = [
         "ffmpeg",
+        "-hide_banner",  # Hide ffmpeg banner to reduce console output
+        "-loglevel",
+        "warning",  # Only show warnings and errors
         "-i",
         str(video_path),
         "-vn",  # No video
@@ -1046,8 +1106,13 @@ def extract_audio_from_video(video_path, audio_path):
         "-y",
     ]
 
-    subprocess.run(ffmpeg_cmd, check=True)
-    print(f"Audio extracted to: {audio_path}")
+    try:
+        subprocess.run(ffmpeg_cmd, check=True)
+        print(f"Audio extracted to: {audio_path}")
+        return True
+    except subprocess.CalledProcessError:
+        print(f"⚠️  Failed to extract audio from {video_path}, please check the file.")
+        return False
 
 
 def find_timeline_files(directory):
@@ -1353,10 +1418,12 @@ def process_single_file(args):
         try:
             # Handle video files: extract audio first
             if is_video:
-                with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_audio:
-                    temp_audio_path = temp_audio.name
-                extract_audio_from_video(input_path, temp_audio_path)
-                audio_for_analysis = temp_audio_path
+                # Create temporary audio file in the same directory as the video
+                temp_audio_path = input_path.parent / f"{input_path.stem}_temp_audio.wav"
+                has_audio = extract_audio_from_video(input_path, temp_audio_path)
+                audio_for_analysis = str(temp_audio_path)
+                if not has_audio:
+                    print("ℹ️  Video has no audio stream - will process silent audio for timeline generation")
             else:
                 # For audio files, use the original path
                 audio_for_analysis = str(input_path)
@@ -1400,8 +1467,8 @@ def process_single_file(args):
 
         finally:
             # Clean up temporary audio file if it was created
-            if temp_audio_path and os.path.exists(temp_audio_path):
-                os.remove(temp_audio_path)
+            if temp_audio_path and Path(temp_audio_path).exists():
+                Path(temp_audio_path).unlink()
 
         print("✨ Done!")
         return 0

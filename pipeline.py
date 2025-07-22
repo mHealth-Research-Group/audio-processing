@@ -10,8 +10,6 @@ This module implements the complete workflow:
 
 import datetime
 import json
-import tempfile
-import os
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -26,7 +24,7 @@ from main import (
 )
 
 # Import new video processing functionality
-from video_processing import merge_videos_with_gaps, save_gap_labels, merge_labels_with_timeline
+from video_processing import merge_videos_with_gaps, save_gap_labels, merge_labels_with_timeline, get_video_duration
 
 
 class ProcessingPipeline:
@@ -178,16 +176,47 @@ class ProcessingPipeline:
         print("Loading pyannote model...")
         model = load_model()
 
-        # Extract audio from merged video
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_audio:
-            temp_audio_path = temp_audio.name
+        # Extract audio from merged video to same directory as video
+        merged_video_path = Path(self.merged_video_path)
+        temp_audio_path = merged_video_path.parent / f"{merged_video_path.stem}_temp_audio.wav"
 
         try:
-            extract_audio_from_video(self.merged_video_path, temp_audio_path)
+            has_audio = extract_audio_from_video(self.merged_video_path, str(temp_audio_path))
+            timeline_data = {}
 
-            # Generate audio timeline
-            print("Generating speaker timeline...")
-            timeline_data = generate_speaker_timeline(temp_audio_path, model, min_duration_on, min_duration_off)
+            if not has_audio:
+                print("ℹ️  Merged video has no audio stream - creating a silent timeline.")
+                duration = get_video_duration(self.merged_video_path)
+                timeline_data = {
+                    "timeline": [
+                        {
+                            "start": "0:00.000",
+                            "end": f"{int(duration // 60)}:{duration % 60:06.3f}",
+                            "duration": f"{int(duration // 60)}:{duration % 60:06.3f}",
+                            "type": "silence",
+                            "speakers": 0,
+                            "label": "silence",
+                        }
+                    ],
+                    "summary": {
+                        "total_duration": f"{int(duration // 60)}:{duration % 60:06.3f}",
+                        "total_speech_time": "0:00.000",
+                        "total_conversation_time": "0:00.000",
+                        "total_speaking_time": "0:00.000",
+                        "total_silence_time": f"{int(duration // 60)}:{duration % 60:06.3f}",
+                        "speech_percentage": 0,
+                        "conversation_percentage": 0,
+                        "has_multiple_speakers": False,
+                        "num_segments": 1,
+                    },
+                    "has_multiple_speakers": False,
+                }
+            else:
+                # Generate audio timeline
+                print("Generating speaker timeline...")
+                timeline_data = generate_speaker_timeline(
+                    str(temp_audio_path), model, min_duration_on, min_duration_off
+                )
 
             # Merge with video gap labels
             if self.gap_labels:
@@ -217,8 +246,8 @@ class ProcessingPipeline:
 
         finally:
             # Clean up temporary audio file
-            if os.path.exists(temp_audio_path):
-                os.remove(temp_audio_path)
+            if temp_audio_path.exists():
+                temp_audio_path.unlink()
 
     def step3_prepare_manual_adjustments(self) -> str:
         """
