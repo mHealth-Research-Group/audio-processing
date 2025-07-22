@@ -269,13 +269,11 @@ def analyze_speaker_segments_direct(audio_path, model, chunk_duration=10.0):
                             if num_speakers > 1:
                                 frame_start = chunk_start_time + frame_idx * frame_duration
                                 frame_end = frame_start + frame_duration
-                                speaker_segments.append(
-                                    {
-                                        "start": frame_start,
-                                        "end": frame_end,
-                                        "num_speakers": num_speakers.item(),
-                                    }
-                                )
+                                speaker_segments.append({
+                                    "start": frame_start,
+                                    "end": frame_end,
+                                    "num_speakers": num_speakers.item(),
+                                })
 
                 # Clear batch for next iteration
                 chunks = []
@@ -428,13 +426,11 @@ def generate_speaker_timeline(audio_path, model, min_duration_on=0.1, min_durati
                     for frame_idx, num_speakers in enumerate(active_speakers_per_frame):
                         frame_start = chunk_start_time + (frame_idx * chunk_duration / frames_per_chunk)
                         frame_end = min(frame_start + (chunk_duration / frames_per_chunk), total_duration)
-                        speaker_counts_timeline.append(
-                            {
-                                "start": frame_start,
-                                "end": frame_end,
-                                "speaker_count": num_speakers.item(),
-                            }
-                        )
+                        speaker_counts_timeline.append({
+                            "start": frame_start,
+                            "end": frame_end,
+                            "speaker_count": num_speakers.item(),
+                        })
 
                 # Clear batch for next iteration
                 chunks = []
@@ -493,33 +489,27 @@ def generate_speaker_timeline(audio_path, model, min_duration_on=0.1, min_durati
             }
 
             if not voice_active:
-                base_segment.update(
-                    {
-                        "type": "silence",
-                        "speakers": 0,
-                        "label": "silence",
-                    }
-                )
+                base_segment.update({
+                    "type": "silence",
+                    "speakers": 0,
+                    "label": "silence",
+                })
                 return base_segment
 
             speaker_count = max(get_speaker_count_at_time(start), get_speaker_count_at_time(end))
 
             if overlapped or speaker_count > 1:
-                base_segment.update(
-                    {
-                        "type": "speech",
-                        "speakers": max(speaker_count, 2),
-                        "label": "conversation",
-                    }
-                )
+                base_segment.update({
+                    "type": "speech",
+                    "speakers": max(speaker_count, 2),
+                    "label": "conversation",
+                })
             else:
-                base_segment.update(
-                    {
-                        "type": "speech",
-                        "speakers": max(speaker_count, 1),
-                        "label": "speaking",
-                    }
-                )
+                base_segment.update({
+                    "type": "speech",
+                    "speakers": max(speaker_count, 1),
+                    "label": "speaking",
+                })
             return base_segment
 
         # Process events to create timeline
@@ -978,14 +968,12 @@ def process_media_with_effects(input_path, output_path, effect_segments, compres
 
         # Add performance optimizations for x264
         if codec == "libx264":
-            ffmpeg_cmd.extend(
-                [
-                    "-x264-params",
-                    "threads=0",  # Use all threads for x264
-                    "-movflags",
-                    "+faststart",  # Optimize for streaming/web playback
-                ]
-            )
+            ffmpeg_cmd.extend([
+                "-x264-params",
+                "threads=0",  # Use all threads for x264
+                "-movflags",
+                "+faststart",  # Optimize for streaming/web playback
+            ])
 
         if compression_params:
             ffmpeg_cmd.extend(["-crf", compression_params["crf"]])

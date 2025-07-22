@@ -160,11 +160,36 @@ def analyze_video_gaps(video_directory: str, max_workers: Optional[int] = None) 
     if not video_path.exists():
         raise FileNotFoundError(f"Directory does not exist: {video_directory}")
 
-    # Find all video files (MP4, AVI, MOV, etc.)
+    # Find all video files (MP4, AVI, MOV, etc.) - excluding temporary/generated files
     video_extensions = ["*.MP4", "*.mp4", "*.AVI", "*.avi", "*.MOV", "*.mov", "*.MKV", "*.mkv"]
     video_files = []
+    found_files = set()  # Use set to avoid duplicates on case-insensitive filesystems
+
     for ext in video_extensions:
-        video_files.extend(sorted(glob.glob(str(video_path / ext))))
+        files = sorted(glob.glob(str(video_path / ext)))
+        # Filter out temporary files (blank videos and processed files)
+        filtered_files = [
+            f
+            for f in files
+            if not (
+                "_blank" in os.path.basename(f)
+                or "merged_video" in os.path.basename(f)
+                or "_no_conversations" in os.path.basename(f)
+                or "_edited" in os.path.basename(f)
+                or "_processed" in os.path.basename(f)
+            )
+        ]
+
+        # Add files to the list, avoiding duplicates
+        for file_path in filtered_files:
+            # Normalize path for comparison (handle case-insensitive filesystems)
+            normalized_path = os.path.normpath(file_path).lower()
+            if normalized_path not in found_files:
+                found_files.add(normalized_path)
+                video_files.append(file_path)
+
+    # Sort the final list to ensure consistent ordering
+    video_files.sort()
 
     if not video_files:
         raise ValueError(f"No video files found in {video_directory}")
