@@ -55,17 +55,28 @@ This single command will:
 
 ### Complete Processing (Recommended)
 
+The `--complete` flag enables all analysis features but **skips H264 conversion** for faster processing:
+- `--merge-videos` - Merge timestamped videos with gap filling
+- `--generate-timeline` - Create JSON timeline of speech segments  
+- `--analyze-speakers` - Detect multiple speakers
+- `--no-h264` - Skip H264 conversion (keeps original codec)
+
 ```bash
-# Complete processing with default settings
+# Complete processing with default settings (no H264 conversion)
 uv run main.py process /path/to/videos/ --complete
 
-# Complete processing with custom output and quality
+# Complete processing (without H264 conversion - faster)
 uv run main.py process /path/to/videos/ --complete \
+    --output processed_footage.mp4
+
+# Complete processing WITH H264 conversion (high quality)
+uv run main.py process /path/to/videos/ \
+    --merge-videos --generate-timeline --analyze-speakers \
     --output high_quality.mp4 \
     --h264-preset slow \
     --h264-crf 18
 
-# Complete processing with custom gap threshold
+# Complete processing with custom gap threshold (no H264)
 uv run main.py process /path/to/videos/ --complete \
     --max-gap-threshold 120 \
     --output security_footage.mp4
@@ -103,34 +114,37 @@ uv run main.py process complex_audio.mp4 --detailed-analysis --generate-timeline
 
 ### Advanced Configuration
 
-**H264 Quality Settings:**
+**H264 Quality Settings** (only used when H264 conversion is enabled):
 ```bash
-# High quality (slower encoding)
---h264-preset slow --h264-crf 18
+# High quality (slower encoding) - must omit --complete or --no-h264
+uv run main.py process /path/to/videos/ --merge-videos --generate-timeline \
+    --h264-preset slow --h264-crf 18
 
 # Balanced (default: optimized for speed)
---h264-preset faster --h264-crf 28
+uv run main.py process /path/to/videos/ --merge-videos \
+    --h264-preset faster --h264-crf 28
 
 # Fast encoding (larger files)
---h264-preset fast --h264-crf 30
+uv run main.py process /path/to/videos/ --merge-videos \
+    --h264-preset fast --h264-crf 30
 
-# Maximum speed (largest files)
---h264-preset ultrafast --h264-crf 35
+# Maximum speed (largest files)  
+uv run main.py process /path/to/videos/ --merge-videos \
+    --h264-preset ultrafast --h264-crf 35
 ```
 
 **Gap Handling:**
 ```bash
-# Default: Fill all gaps regardless of size
-# (no --max-gap-threshold needed)
+# Default: Fill gaps ≥ 0.5s, no maximum limit
+uv run main.py process /path/to/videos/ --merge-videos
 
-# Fill gaps up to 2 minutes only
---max-gap-threshold 120
+# Fill gaps ≥ 0.5s, up to 2 minutes only
+uv run main.py process /path/to/videos/ --merge-videos \
+    --max-gap-threshold 120
 
-# Fill gaps up to 30 seconds only
---max-gap-threshold 30
-
-# No gap filling (concatenate adjacent videos only)
---max-gap-threshold 0
+# Fill gaps ≥ 0.5s, up to 30 seconds only  
+uv run main.py process /path/to/videos/ --merge-videos \
+    --max-gap-threshold 30
 ```
 
 ## Two-Pass Workflow

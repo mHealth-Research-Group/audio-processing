@@ -12,7 +12,6 @@ import json
 import logging
 import re
 import subprocess
-import tempfile
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import List, Tuple, Optional
@@ -171,7 +170,7 @@ def analyze_video_directory(directory: Path) -> List[VideoSegment]:
 
 
 def detect_gaps(
-    segments: List[VideoSegment], max_gap_threshold: Optional[float] = None
+    segments: List[VideoSegment], max_gap_threshold: Optional[float] = None, min_gap_threshold: float = 0.5
 ) -> List[Tuple[datetime, float]]:
     """
     Detect gaps between video segments that need to be filled.
@@ -179,6 +178,7 @@ def detect_gaps(
     Args:
         segments: List of sorted video segments
         max_gap_threshold: Maximum gap duration to consider (None = no limit)
+        min_gap_threshold: Minimum gap duration to fill (default: 0.5 seconds)
 
     Returns:
         List of (start_time, duration) tuples for gaps to fill
@@ -193,11 +193,15 @@ def detect_gaps(
 
         gap_duration = (next_start - current_end).total_seconds()
 
-        # Fill gap if it's positive and within threshold (or no threshold)
-        if gap_duration > 0 and (max_gap_threshold is None or gap_duration <= max_gap_threshold):
+        # Fill gap if it's positive, above minimum threshold, and within max threshold (or no max threshold)
+        if gap_duration >= min_gap_threshold and (max_gap_threshold is None or gap_duration <= max_gap_threshold):
             gaps.append((current_end, gap_duration))
             logger.info(
                 f"Gap detected: {gap_duration:.1f}s between {segments[i].file_path.name} and {segments[i + 1].file_path.name}"
+            )
+        elif gap_duration > 0 and gap_duration < min_gap_threshold:
+            logger.debug(
+                f"Gap too small ({gap_duration:.1f}s < {min_gap_threshold:.1f}s), skipping between {segments[i].file_path.name} and {segments[i + 1].file_path.name}"
             )
         elif gap_duration > 0 and max_gap_threshold is not None:
             logger.warning(
@@ -391,8 +395,13 @@ def merge_videos_with_gaps(
         logger.info(f"Merging {len(segments)} video segments with {len(gaps)} gaps")
         logger.info(f"Reference properties: {width}x{height}@{fps}fps")
 
-        with tempfile.TemporaryDirectory() as temp_dir:
-            temp_path = Path(temp_dir)
+        # Create local temp directory in input folder for better cleanup control
+        input_dir = segments[0].file_path.parent
+        local_temp_dir = input_dir / "tmp"
+        local_temp_dir.mkdir(exist_ok=True)
+
+        try:
+            temp_path = local_temp_dir
 
             # Create black videos for gaps
             gap_files = []
@@ -614,6 +623,20 @@ def merge_videos_with_gaps(
                     raise
             else:
                 logger.info(f"Video merging complete: {intermediate_path}")
+
+        except Exception as e:
+            logger.error(f"Error in merge_videos_with_gaps: {e}")
+            raise
+        finally:
+            # Clean up local temp directory
+            if local_temp_dir.exists():
+                import shutil
+
+                try:
+                    shutil.rmtree(local_temp_dir)
+                    logger.debug(f"Cleaned up temp directory: {local_temp_dir}")
+                except Exception as cleanup_error:
+                    logger.warning(f"Failed to clean up temp directory {local_temp_dir}: {cleanup_error}")
 
     except Exception as e:
         logger.error(f"Error in merge_videos_with_gaps: {e}")

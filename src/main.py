@@ -27,7 +27,7 @@ def add_process_arguments(parser):
     parser.add_argument(
         "--complete",
         action="store_true",
-        help="Enable complete processing (equivalent to --merge-videos --generate-timeline --analyze-speakers)",
+        help="Enable complete processing (equivalent to --merge-videos --generate-timeline --analyze-speakers --no-h264)",
     )
 
     parser.add_argument(
@@ -160,7 +160,8 @@ def main():
             args.merge_videos = True
             args.generate_timeline = True
             args.analyze_speakers = True
-            print("🚀 Complete processing enabled: --merge-videos --generate-timeline --analyze-speakers")
+            args.no_h264 = True
+            print("🚀 Complete processing enabled: --merge-videos --generate-timeline --analyze-speakers --no-h264")
 
         # Handle --no-h264 flag
         if hasattr(args, "no_h264") and args.no_h264:
