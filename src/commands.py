@@ -1,7 +1,6 @@
 import argparse
 import os
 import sys
-import tempfile
 from pathlib import Path
 import subprocess
 
@@ -91,6 +90,7 @@ def process_single_file(args):
         print(f"Processing {input_path.name}...")
         model = load_model()
         temp_audio_path = None
+        local_temp_dir = None
 
         # Check if we need audio analysis (not for merge-only operations)
         needs_audio_analysis = not getattr(args, "merge_only", False)
@@ -98,8 +98,10 @@ def process_single_file(args):
         try:
             if is_video and needs_audio_analysis:
                 # Try to extract audio for analysis
-                with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_audio:
-                    temp_audio_path = temp_audio.name
+                # Create local temp directory like the video merger does
+                local_temp_dir = input_path.parent / "tmp"
+                local_temp_dir.mkdir(exist_ok=True)
+                temp_audio_path = str(local_temp_dir / f"{input_path.stem}_audio.wav")
 
                 try:
                     extract_audio_from_video(input_path, temp_audio_path)
@@ -141,6 +143,12 @@ def process_single_file(args):
         finally:
             if temp_audio_path and os.path.exists(temp_audio_path):
                 os.remove(temp_audio_path)
+            # Clean up local temp directory if it exists and is empty
+            if local_temp_dir and local_temp_dir.exists():
+                try:
+                    local_temp_dir.rmdir()  # Only removes if empty
+                except OSError:
+                    pass  # Directory not empty or other files exist
         return 0
     except Exception as e:
         print(f"Error processing {args.input_path}: {e}", file=sys.stderr)
