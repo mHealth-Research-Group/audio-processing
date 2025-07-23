@@ -201,6 +201,7 @@ def process_directory(args):
 
         if not success:
             print("Video merging failed", file=sys.stderr)
+            # Do not delete the whole input directory on failure
             return 1
 
         print(f"Video merging completed successfully: {merged_output}")
@@ -210,11 +211,22 @@ def process_directory(args):
             print("\nProcessing merged video for speech analysis...")
             file_args = argparse.Namespace(**vars(args))
             file_args.input_path = str(merged_output)
-            file_args.output = str(merged_output.parent / f"{merged_output.stem}_processed{merged_output.suffix}")
+
+            # Determine the base output path for the processed file and timeline
+            if args.output:
+                base_output_path = Path(args.output)
+                file_args.output = str(base_output_path)
+            else:
+                base_output_path = merged_output
+                file_args.output = str(
+                    base_output_path.parent / f"{base_output_path.stem}_processed{base_output_path.suffix}"
+                )
+
+            # Set timeline output path correctly
             if args.timeline_output:
-                file_args.timeline_output = str(timeline_dir / f"{merged_output.stem}_timeline.json")
+                file_args.timeline_output = str(timeline_dir / f"{base_output_path.stem}_timeline.json")
             elif args.generate_timeline:
-                file_args.timeline_output = str(merged_output.parent / f"{merged_output.stem}_timeline.json")
+                file_args.timeline_output = str(timeline_dir / f"{base_output_path.stem}_timeline.json")
 
             return process_single_file(file_args)
 
@@ -229,15 +241,23 @@ def process_directory(args):
     for media_file in media_files:
         file_args = argparse.Namespace(**vars(args))
         file_args.input_path = str(media_file)
+
+        # Determine the base output path for the processed file and timeline
         if args.output:
+            base_output_path = Path(args.output).parent / media_file.name
             file_args.output = str(output_dir / f"{media_file.stem}_processed{media_file.suffix}")
         else:
+            base_output_path = media_file
             file_args.output = None
+
+        # Set timeline output path correctly
         if args.timeline_output:
-            file_args.timeline_output = str(timeline_dir / f"{media_file.stem}_timeline.json")
+            file_args.timeline_output = str(timeline_dir / f"{base_output_path.stem}_timeline.json")
         elif args.generate_timeline:
-            file_args.timeline_output = str(output_dir / f"{media_file.stem}_timeline.json")
+            file_args.timeline_output = str(output_dir / f"{base_output_path.stem}_timeline.json")
+
         process_single_file(file_args)
+
     return 0
 
 

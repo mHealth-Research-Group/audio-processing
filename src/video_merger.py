@@ -448,13 +448,6 @@ def merge_videos_with_gaps(
             # Ensure output directory exists
             output_path.parent.mkdir(parents=True, exist_ok=True)
 
-            # Debug: Check if output_path is being treated as directory
-            if output_path.exists() and output_path.is_dir():
-                logger.warning(f"Output path {output_path} exists as directory, removing it")
-                import shutil
-
-                shutil.rmtree(output_path)
-
             # Determine if we need intermediate processing
             if convert_to_h264:
                 # Use intermediate file for conversion
