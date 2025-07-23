@@ -71,7 +71,7 @@ uv run main.py process /path/to/videos/ --complete \
     --output security_footage.mp4
 ```
 
-### 🎬 Video Merging Only
+### Video Merging Only
 
 For timestamped videos that just need merging without speech analysis:
 
@@ -208,7 +208,7 @@ for dir in footage_*; do
 done
 ```
 
-## 🔧 Command Reference
+## Command Reference
 
 ### Main Commands
 - `process` - Main processing command
@@ -227,27 +227,3 @@ done
 - `--h264-crf` - Quality: `0-51` (lower = better quality)
 - `--no-h264` - Skip conversion (faster, keeps original codec)
 - `--max-gap-threshold` - Maximum gap to fill (seconds)
-
-## 🚀 Performance Features
-
-- **Automatic GPU Detection**: Uses NVIDIA NVENC when available
-- **Parallel Processing**: Utilizes all CPU cores for optimal speed  
-- **Memory Efficient**: Processes large videos without memory issues
-- **Smart Concatenation**: Avoids re-encoding when possible
-- **Optimized Pipelines**: Different strategies for different use cases
-
-## 💡 Tips & Best Practices
-
-1. **Use `--complete`** for most workflows - it's the recommended starting point
-2. **Start with `--merge-only`** for quick previews, then rerun with full analysis
-3. **Adjust `--max-gap-threshold`** based on your content (30s for presentations, 300s for security footage)
-4. **Use `--h264-preset faster`** for faster processing, `slow` for best quality
-5. **Keep original files** - the tool creates new files without modifying originals
-6. **Check GPU acceleration** - significant speed improvement with NVIDIA cards
-
-## 🔍 Troubleshooting
-
-**No audio stream errors:** Tool automatically handles video-only files ✅  
-**GPU not detected:** Ensure NVIDIA drivers and ffmpeg with NVENC support  
-**Large file sizes:** Use lower `--h264-crf` values or faster presets  
-**Timeline editing:** Ensure JSON syntax is valid after manual edits
