@@ -3,6 +3,7 @@ import os
 import sys
 from pathlib import Path
 import subprocess
+import json
 
 from .audio_analysis import (
     analyze_speaker_segments_direct,
@@ -27,9 +28,7 @@ from .utils import (
     load_timeline,
     mmss_to_seconds,
 )
-from .video_merger import (
-    merge_directory_videos,
-)
+from .video_merger import merge_videos
 
 
 def _handle_speaker_and_timeline_analysis(args, audio_path, model):
@@ -127,6 +126,17 @@ def process_single_file(args):
                         audio_for_analysis, model, args.min_duration_on, args.min_duration_off
                     )
 
+            # Save timeline data if generated and timeline_output is specified
+            if timeline_data and hasattr(args, "timeline_output") and args.timeline_output:
+                timeline_output_path = Path(args.timeline_output)
+                timeline_output_path.parent.mkdir(parents=True, exist_ok=True)
+                try:
+                    with open(timeline_output_path, "w", encoding="utf-8") as f:
+                        json.dump(timeline_data, f, indent=2, ensure_ascii=False)
+                    print(f"Timeline saved: {timeline_output_path}")
+                except Exception as e:
+                    print(f"Warning: Failed to save timeline to {timeline_output_path}: {e}")
+
             # Process media with effects only if we have voice segments and not doing analysis only
             if not args.speaker_analysis_only and not getattr(args, "merge_only", False):
                 if not voice_segments:
@@ -155,6 +165,71 @@ def process_single_file(args):
         return 1
 
 
+def check_existing_merged_video(output_path: Path, input_dir: Path, force_overwrite: bool = False) -> bool:
+    """
+    Check if merged video already exists and prompt user for action.
+
+    Args:
+        output_path: Proposed output path for merged video
+        input_dir: Input directory (to check for existing merged_video.mp4)
+        force_overwrite: If True, automatically overwrite without prompting
+
+    Returns:
+        True if should proceed with merge, False if should skip
+    """
+    if force_overwrite:
+        if output_path.exists():
+            print(f"Overwriting existing merged video: {output_path}")
+        return True
+
+    # Check if the specific output path exists
+    if output_path.exists():
+        print(f"\nMerged video already exists: {output_path}")
+        while True:
+            response = input("Do you want to (o)verwrite, (s)kip, or (q)uit? [o/s/q]: ").lower().strip()
+            if response in ["o", "overwrite"]:
+                print("Overwriting existing merged video...")
+                return True
+            elif response in ["s", "skip"]:
+                print("Skipping merge operation...")
+                return False
+            elif response in ["q", "quit"]:
+                print("Quitting...")
+                sys.exit(0)
+            else:
+                print("Please enter 'o' for overwrite, 's' for skip, or 'q' for quit.")
+
+    # Also check for common merged video names in input directory
+    common_names = ["merged_video.mp4", "merged_video_h264.mp4"]
+    existing_files = []
+
+    for name in common_names:
+        potential_file = input_dir / name
+        if potential_file.exists() and potential_file != output_path:
+            existing_files.append(potential_file)
+
+    if existing_files:
+        print("\nFound existing merged video(s) in input directory:")
+        for file in existing_files:
+            print(f"  - {file.name}")
+
+        while True:
+            response = input("Do you want to (o)verwrite, (s)kip, or (q)uit? [o/s/q]: ").lower().strip()
+            if response in ["o", "overwrite"]:
+                print("Proceeding with merge (existing files will remain)...")
+                return True
+            elif response in ["s", "skip"]:
+                print("Skipping merge operation...")
+                return False
+            elif response in ["q", "quit"]:
+                print("Quitting...")
+                sys.exit(0)
+            else:
+                print("Please enter 'o' for overwrite, 's' for skip, or 'q' for quit.")
+
+    return True
+
+
 def process_directory(args):
     """Process all media files in a directory."""
     input_dir = Path(args.input_path)
@@ -162,13 +237,34 @@ def process_directory(args):
         print(f"Error: {input_dir} is not a directory.", file=sys.stderr)
         return 1
 
-    output_dir = Path(args.output) if args.output else input_dir
-    output_dir.mkdir(parents=True, exist_ok=True)
+    # For video merging, output is a file; for other operations, it's a directory
+    if getattr(args, "merge_videos", False) and args.output:
+        # Output is a single merged video file
+        output_path = Path(args.output)
+        output_dir = output_path.parent
+        output_dir.mkdir(parents=True, exist_ok=True)
+    else:
+        # Output is a directory for multiple processed files
+        output_dir = Path(args.output) if args.output else input_dir
+        output_dir.mkdir(parents=True, exist_ok=True)
+    
     timeline_dir = Path(args.timeline_output) if args.timeline_output else output_dir
     timeline_dir.mkdir(parents=True, exist_ok=True)
 
     # Check if directory contains multiple timestamped videos for merging
-    video_files = [f for f in input_dir.iterdir() if f.is_file() and is_video_file(f)]
+    all_video_files = [f for f in input_dir.iterdir() if f.is_file() and is_video_file(f)]
+
+    # Filter out merge output files and processed files (same logic as video_merger.py)
+    excluded_patterns = ["merged_video", "_merged", "_processed", "_edited", "_h264", "_timeline"]
+
+    video_files = []
+    for video_file in all_video_files:
+        stem_lower = video_file.stem.lower()
+        should_exclude = any(pattern in stem_lower for pattern in excluded_patterns)
+
+        if not should_exclude:
+            video_files.append(video_file)
+
     has_timestamped_videos = False
 
     if len(video_files) > 1:
@@ -189,19 +285,21 @@ def process_directory(args):
         else:
             merged_output = output_dir / f"merged_video{'_h264' if getattr(args, 'convert_h264', True) else ''}.mp4"
 
-        # Merge videos with optional H264 conversion
-        success = merge_directory_videos(
-            input_dir=input_dir,
-            output_path=merged_output,
-            max_gap_threshold=getattr(args, "max_gap_threshold", 300.0),
-            convert_to_h264=getattr(args, "convert_h264", True),
-            h264_preset=getattr(args, "h264_preset", "medium"),
-            h264_crf=getattr(args, "h264_crf", 23),
-        )
+        # Check if merged video already exists and prompt user
+        if not check_existing_merged_video(merged_output, input_dir, getattr(args, "force_overwrite", False)):
+            return 0  # Skip merge operation
 
-        if not success:
-            print("Video merging failed", file=sys.stderr)
-            # Do not delete the whole input directory on failure
+        # Merge videos with optional H264 conversion
+        try:
+            merge_videos(
+                input_dir=input_dir,
+                output_path=merged_output,
+                min_gap_threshold=getattr(args, "min_gap_threshold", 0.5),
+                max_gap_threshold=getattr(args, "max_gap_threshold", None),
+                convert_h264=getattr(args, "convert_h264", True),
+            )
+        except Exception as e:
+            print(f"Video merging failed: {e}", file=sys.stderr)
             return 1
 
         print(f"Video merging completed successfully: {merged_output}")

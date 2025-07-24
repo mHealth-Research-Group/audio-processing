@@ -1,4 +1,5 @@
 import os
+import warnings
 import torch
 from pyannote.audio import Model
 from pyannote.audio.pipelines import (
@@ -7,6 +8,9 @@ from pyannote.audio.pipelines import (
 )
 from pyannote.audio.utils.powerset import Powerset
 from .utils import mmss_to_seconds
+
+# Suppress pyannote TensorFloat-32 (TF32) reproducibility warning
+warnings.filterwarnings("ignore", category=UserWarning, module="pyannote.audio.utils.reproducibility")
 
 # Set device for PyTorch operations
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")

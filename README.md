@@ -135,15 +135,17 @@ uv run main.py process /path/to/videos/ --merge-videos \
 
 **Gap Handling:**
 ```bash
-# Default: Fill gaps ≥ 0.5s, no maximum limit
+# Default: Fill gaps ≥ 2s, no maximum limit
 uv run main.py process /path/to/videos/ --merge-videos
 
 # Fill gaps ≥ 0.5s, up to 2 minutes only
 uv run main.py process /path/to/videos/ --merge-videos \
+    --min-gap-threshold 0.5 \
     --max-gap-threshold 120
 
 # Fill gaps ≥ 0.5s, up to 30 seconds only  
 uv run main.py process /path/to/videos/ --merge-videos \
+    --min-gap-threshold 0.5 \
     --max-gap-threshold 30
 ```
 
@@ -229,15 +231,34 @@ done
 - `apply-edits` - Apply timeline edits from JSON files  
 - `apply-effects` - Apply effects to specific time ranges
 
-### Key Flags
-- `--complete` - **Enable full processing pipeline**
+### Processing Flags
+- `--complete` - **Enable full processing pipeline** (--merge-videos --generate-timeline --analyze-speakers --no-h264)
 - `--merge-videos` - Enable video merging for timestamped files
 - `--merge-only` - Merge without speech analysis (faster)
 - `--generate-timeline` - Create JSON timeline for manual editing
 - `--analyze-speakers` - Enable speaker detection and analysis
+- `--detailed-analysis` - Use advanced speaker analysis (slower but more accurate)
+- `--speaker-analysis-only` - Only perform speaker analysis without generating output files
 
-### Performance Options  
-- `--h264-preset` - Encoding speed: `ultrafast` to `veryslow`
-- `--h264-crf` - Quality: `0-51` (lower = better quality)
-- `--no-h264` - Skip conversion (faster, keeps original codec)
-- `--max-gap-threshold` - Maximum gap to fill (seconds)
+### Timeline Options
+- `--timeline-output PATH` - Custom path for timeline output file
+- `--min-duration-on SECONDS` - Minimum duration for speech regions (default: 0.05)
+- `--min-duration-off SECONDS` - Minimum duration for non-speech regions (default: 0.2)
+
+### Video Merging Options
+- `--force-overwrite` / `-f` - Overwrite existing merged videos without prompting
+- `--min-gap-threshold SECONDS` - Minimum gap duration to fill with black frames (default: 2)
+- `--max-gap-threshold SECONDS` - Maximum gap duration to fill with black frames (default: no limit)
+
+### H264 Conversion Options
+- `--no-h264` - Skip H264 conversion (keeps original codec, faster)
+- `--h264-preset` - Encoding speed: `ultrafast` to `veryslow` (default: faster)
+- `--h264-crf` - Quality: `0-51` (lower = better quality, default: 28)
+
+### Additional Commands
+- `apply-edits DIRECTORY` - Apply timeline edits from JSON files
+  - `--output-suffix SUFFIX` - Suffix for output files (default: _edited)
+  - `--effect-labels LABELS...` - Labels to apply effects to (e.g., speaking)
+- `apply-effects INPUT_PATH TIME_RANGES...` - Apply effects to specific time ranges
+  - `--effect {black,mute,all}` - Effect to apply (default: all)
+- `debug-encoding FILE_PATH` - Debug file encoding issues

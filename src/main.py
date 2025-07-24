@@ -33,13 +33,13 @@ def add_process_arguments(parser):
     parser.add_argument(
         "--min-duration-on",
         type=float,
-        default=0.1,
+        default=0.05,
         help="Minimum duration for speech regions in seconds.",
     )
     parser.add_argument(
         "--min-duration-off",
         type=float,
-        default=0.1,
+        default=0.2,
         help="Minimum duration for non-speech regions in seconds.",
     )
     parser.add_argument(
@@ -79,6 +79,18 @@ def add_process_arguments(parser):
         help="Only merge videos without additional speech processing.",
     )
     parser.add_argument(
+        "--force-overwrite",
+        "-f",
+        action="store_true",
+        help="Overwrite existing merged videos without prompting.",
+    )
+    parser.add_argument(
+        "--min-gap-threshold",
+        type=float,
+        default=2,
+        help="Minimum gap duration (seconds) to fill with black frames when merging videos.",
+    )
+    parser.add_argument(
         "--max-gap-threshold",
         type=float,
         default=None,
@@ -86,12 +98,6 @@ def add_process_arguments(parser):
     )
 
     # H264 conversion options
-    parser.add_argument(
-        "--convert-h264",
-        action="store_true",
-        default=True,
-        help="Convert final output to H264 format (default: enabled).",
-    )
     parser.add_argument(
         "--no-h264",
         action="store_true",
@@ -163,9 +169,8 @@ def main():
             args.no_h264 = True
             print("🚀 Complete processing enabled: --merge-videos --generate-timeline --analyze-speakers --no-h264")
 
-        # Handle --no-h264 flag
-        if hasattr(args, "no_h264") and args.no_h264:
-            args.convert_h264 = False
+        # Handle H264 conversion - enabled by default, disabled with --no-h264
+        args.convert_h264 = not getattr(args, "no_h264", False)
 
         if args.mode == "process":
             if Path(args.input_path).is_dir():
