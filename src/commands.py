@@ -362,16 +362,20 @@ def apply_blank_command(args):
 
         # Extract segments marked as "all" for blank video replacement
         blank_segments = []
+        timeline_modified = False
         if "timeline" in timeline_data:
             for segment in timeline_data["timeline"]:
-                if segment.get("label") == "all":
+                if segment.get("type") == "all":
                     start_time = mmss_to_seconds(segment["start"])
                     end_time = mmss_to_seconds(segment["end"])
                     blank_segments.append((start_time, end_time))
+                    # Mark segment as removed
+                    segment["label"] = "removed"
+                    timeline_modified = True
 
         if not blank_segments:
             print("No segments marked as 'all' found in timeline")
-            print("To mark segments for blank video replacement, edit the timeline JSON and change 'label' to 'all'")
+            print("To mark segments for blank video replacement, edit the timeline JSON and change 'type' to 'all'")
             return 0
 
         print(f"Found {len(blank_segments)} segments marked as 'all' to replace with blank video")
@@ -380,6 +384,15 @@ def apply_blank_command(args):
         from .media_processing import apply_blank_video_to_segments
 
         apply_blank_video_to_segments(input_video, output_path, blank_segments, blank_video_path)
+
+        # Save updated timeline if segments were modified
+        if timeline_modified:
+            try:
+                with open(timeline_path, "w", encoding="utf-8") as f:
+                    json.dump(timeline_data, f, indent=2, ensure_ascii=False)
+                print(f"Timeline updated: {timeline_path}")
+            except Exception as e:
+                print(f"Warning: Failed to save updated timeline: {e}")
 
         print(f"Blank video applied successfully: {output_path}")
         return 0
