@@ -246,7 +246,7 @@ def process_directory(args):
                 print(f"\nTimeline generated: {timeline_path}")
                 print("To manually review and apply blank video to specific segments:")
                 print("  1. Edit the timeline JSON file - change 'type' to 'all' for segments you want blanked")
-                print(f"  2. Run: python main.py apply-blank {merged_output} {timeline_path} --blank-video blank.MP4")
+                print(f"  2. Run: python main.py apply-blank {merged_output} {timeline_path}")
 
             return result
 

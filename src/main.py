@@ -125,7 +125,9 @@ def main():
         blank_parser = subparsers.add_parser("apply-blank", help="Replace timeline segments with blank video")
         blank_parser.add_argument("input_video", help="Path to input video file")
         blank_parser.add_argument("timeline", help="Path to timeline JSON file")
-        blank_parser.add_argument("--blank-video", required=True, help="Path to blank video file")
+        blank_parser.add_argument(
+            "--blank-video", default="blank_muted.MP4", help="Path to blank video file (default: blank_muted.MP4)"
+        )
         blank_parser.add_argument("-o", "--output", help="Path for output file")
 
         compress_parser = subparsers.add_parser(

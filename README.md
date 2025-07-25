@@ -94,6 +94,8 @@ Use the `apply-blank` command to replace the marked segments with a blank video.
 uv run main.py apply-blank video.mp4 video_timeline.json -o final_video.mp4
 ```
 
+The command uses `blank_muted.MP4` as the default blank video file. You can specify a different blank video with `--blank-video path/to/blank.mp4`.
+
 **Note:** After processing, segments that were marked as `"type": "all"` will automatically have their `"label"` updated to `"removed"` in the timeline file, making it easy to track which segments have been processed.
 
 ## File Naming Convention
@@ -114,7 +116,7 @@ The tool will detect the 5-minute gap between these files and fill it with a bla
 
 - `process`: The main command for processing files and directories.
 - `apply-edits`: Applies edits from a timeline file to a media file.
-- `apply-blank`: Replaces segments in a video with a blank video based on a timeline.
+- `apply-blank`: Replaces segments in a video with a blank video based on a timeline (uses blank_muted.MP4 by default).
 - `compress`: Compresses video files to H.264 with smaller file sizes.
 
 ### Processing Flags

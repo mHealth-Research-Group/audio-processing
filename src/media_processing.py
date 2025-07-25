@@ -3,7 +3,6 @@ from .utils import (
     EFFECT_CONFIGS,
     run_subprocess_with_encoding,
     mmss_to_seconds,
-    normalize_path_for_ffmpeg,
 )
 
 
@@ -136,7 +135,8 @@ def extract_segments_by_effects(timeline_data, target_effects=None):
 
 def apply_blank_video_to_segments(input_video, output_path, speech_segments, blank_video_path):
     """
-    Replace speech segments in video with blank video using efficient stream copy approach.
+    Replace speech segments in video with blank video using the same approach as video merging.
+    Uses FFmpeg's concat demuxer with stream copy - exactly like gap filling in video merger.
 
     Args:
         input_video: Path to input video
@@ -144,7 +144,7 @@ def apply_blank_video_to_segments(input_video, output_path, speech_segments, bla
         speech_segments: List of (start_time, end_time) tuples for speech segments
         blank_video_path: Path to blank video file
     """
-    from .video_merger import create_gap_video_from_blank
+    from .video_merger import create_gap_video_from_blank, normalize_path_for_ffmpeg
     import shutil
 
     print(f"Applying blank video to {len(speech_segments)} speech segments...")
@@ -154,7 +154,45 @@ def apply_blank_video_to_segments(input_video, output_path, speech_segments, bla
     temp_dir.mkdir(exist_ok=True)
 
     try:
-        # Get video duration
+        # Sort speech segments by start time
+        speech_segments = sorted(speech_segments, key=lambda x: x[0])
+
+        # Create blank video segments for each speech segment
+        blank_videos = {}
+        for i, (speech_start, speech_end) in enumerate(speech_segments):
+            speech_duration = speech_end - speech_start
+            blank_segment_path = temp_dir / f"blank_{i}.mp4"
+            create_gap_video_from_blank(blank_video_path, blank_segment_path, speech_duration)
+            blank_videos[i] = blank_segment_path
+
+        # Create timeline items with timings
+        timeline_items = []
+
+        # Always start with a tiny video segment to ensure audio stream exists
+        min_video_start = 0.033  # Always include first ~1 frame (33ms) as video
+
+        # Add video segments (non-speech parts)
+        current_time = 0.0
+        for i, (speech_start, speech_end) in enumerate(speech_segments):
+            # Ensure we always have some video at the start
+            video_start = current_time
+            video_end = (
+                max(min_video_start, min(speech_start, current_time + min_video_start))
+                if current_time == 0
+                else speech_start
+            )
+
+            # Add video segment before this speech segment
+            if video_start < video_end:
+                timeline_items.append(("video", video_start, video_end - video_start))
+
+            # Add blank segment for this speech (but only if it doesn't overlap with our minimum video)
+            blank_start = max(video_end, speech_start)
+            if blank_start < speech_end:
+                timeline_items.append(("blank", blank_start, speech_end - blank_start, i))
+            current_time = speech_end
+
+        # Add final video segment if needed
         probe_cmd = ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", str(input_video)]
         result = subprocess.run(probe_cmd, capture_output=True, text=True, check=True)
         import json
@@ -162,74 +200,40 @@ def apply_blank_video_to_segments(input_video, output_path, speech_segments, bla
         video_info = json.loads(result.stdout)
         total_duration = float(video_info["format"]["duration"])
 
-        # Sort speech segments by start time
-        speech_segments = sorted(speech_segments, key=lambda x: x[0])
-
-        # Create timeline with alternating video and blank segments
-        timeline = []
-        current_time = 0.0
-
-        for i, (speech_start, speech_end) in enumerate(speech_segments):
-            # Add video segment before speech (if any)
-            if current_time < speech_start:
-                video_segment_path = temp_dir / f"video_{i}_before.mp4"
-                duration = speech_start - current_time
-
-                # Extract video segment
-                extract_cmd = [
-                    "ffmpeg",
-                    "-y",
-                    "-i",
-                    str(input_video),
-                    "-ss",
-                    str(current_time),
-                    "-t",
-                    str(duration),
-                    "-c",
-                    "copy",
-                    str(video_segment_path),
-                ]
-                run_subprocess_with_encoding(extract_cmd, check=True)
-                timeline.append(("video", video_segment_path))
-
-            # Add blank video for speech segment
-            blank_segment_path = temp_dir / f"blank_{i}.mp4"
-            speech_duration = speech_end - speech_start
-
-            create_gap_video_from_blank(blank_video_path, blank_segment_path, speech_duration)
-            timeline.append(("blank", blank_segment_path))
-
-            current_time = speech_end
-
-        # Add final video segment (if any)
         if current_time < total_duration:
-            final_segment_path = temp_dir / "video_final.mp4"
-            duration = total_duration - current_time
+            timeline_items.append(("video", current_time, total_duration - current_time))
 
-            extract_cmd = [
-                "ffmpeg",
-                "-y",
-                "-i",
-                str(input_video),
-                "-ss",
-                str(current_time),
-                "-t",
-                str(duration),
-                "-c",
-                "copy",
-                str(final_segment_path),
-            ]
-            run_subprocess_with_encoding(extract_cmd, check=True)
-            timeline.append(("video", final_segment_path))
-
-        # Create concat list
+        # Create concat list using the same approach as video merger
         concat_list_path = temp_dir / "concat_list.txt"
         with open(concat_list_path, "w") as f:
-            for segment_type, segment_path in timeline:
-                normalized_path = normalize_path_for_ffmpeg(segment_path)
-                f.write(f"file '{normalized_path}'\n")
+            for item in timeline_items:
+                if item[0] == "video":
+                    # Extract video segment
+                    start_time, duration = item[1], item[2]
+                    if duration > 0:  # Only add if duration > 0
+                        video_segment_path = temp_dir / f"video_{start_time:.3f}_{duration:.3f}.mp4"
+                        extract_cmd = [
+                            "ffmpeg",
+                            "-y",
+                            "-i",
+                            str(input_video),
+                            "-ss",
+                            str(start_time),
+                            "-t",
+                            str(duration),
+                            "-c",
+                            "copy",
+                            str(video_segment_path),
+                        ]
+                        run_subprocess_with_encoding(extract_cmd, check=True)
+                        f.write(f"file '{normalize_path_for_ffmpeg(video_segment_path)}'\n")
+                elif item[0] == "blank":
+                    # Use pre-created blank video
+                    blank_index = item[3]
+                    blank_video = blank_videos[blank_index]
+                    f.write(f"file '{normalize_path_for_ffmpeg(blank_video)}'\n")
 
-        # Concatenate all segments using stream copy
+        # Use concat demuxer with video copy but audio re-encode for reliability
         concat_cmd = [
             "ffmpeg",
             "-y",
@@ -239,10 +243,20 @@ def apply_blank_video_to_segments(input_video, output_path, speech_segments, bla
             "0",
             "-i",
             str(concat_list_path),
-            "-c",
-            "copy",
+            "-c:v",
+            "copy",  # Keep video stream copy for speed
+            "-c:a",
+            "aac",  # Re-encode audio for consistency
+            "-b:a",
+            "128k",  # Set audio bitrate
             str(output_path),
         ]
+
+        # Debug: Print the concat list contents
+        print("=== DEBUG: Concat list contents ===")
+        with open(concat_list_path, "r") as f:
+            print(f.read())
+        print("=== END DEBUG ===")
 
         print("Concatenating segments...")
         run_subprocess_with_encoding(concat_cmd, check=True)
