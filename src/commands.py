@@ -364,14 +364,14 @@ def apply_blank_command(args):
         blank_segments = []
         if "timeline" in timeline_data:
             for segment in timeline_data["timeline"]:
-                if segment.get("type") == "all":
+                if segment.get("label") == "all":
                     start_time = mmss_to_seconds(segment["start"])
                     end_time = mmss_to_seconds(segment["end"])
                     blank_segments.append((start_time, end_time))
 
         if not blank_segments:
             print("No segments marked as 'all' found in timeline")
-            print("To mark segments for blank video replacement, edit the timeline JSON and change 'type' to 'all'")
+            print("To mark segments for blank video replacement, edit the timeline JSON and change 'label' to 'all'")
             return 0
 
         print(f"Found {len(blank_segments)} segments marked as 'all' to replace with blank video")

@@ -38,6 +38,31 @@ def run_subprocess_with_encoding(*args, **kwargs):
     return subprocess.run(*args, **kwargs)
 
 
+def normalize_path_for_ffmpeg(path):
+    """
+    Normalize path for FFmpeg usage, handling Windows path issues.
+    
+    Args:
+        path: Path object or string
+        
+    Returns:
+        String path safe for FFmpeg usage
+    """
+    if isinstance(path, str):
+        path = Path(path)
+    
+    # Get absolute path
+    abs_path = path.resolve()
+    
+    # On Windows, convert backslashes to forward slashes for FFmpeg
+    if sys.platform.startswith("win"):
+        # Convert to string and replace backslashes
+        path_str = str(abs_path).replace("\\", "/")
+        return path_str
+    else:
+        return str(abs_path)
+
+
 def load_timeline(timeline_path):
     """Load timeline from JSON file, trying multiple encodings."""
     encodings_to_try = ["utf-8", "utf-8-sig", "utf-16", "utf-16-le", "utf-16-be", "cp1252", "latin1"]

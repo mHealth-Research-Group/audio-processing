@@ -3,6 +3,7 @@ from .utils import (
     EFFECT_CONFIGS,
     run_subprocess_with_encoding,
     mmss_to_seconds,
+    normalize_path_for_ffmpeg,
 )
 
 
@@ -52,8 +53,16 @@ def create_audio_filter(mute_segments):
     """Create ffmpeg audio filter to mute specific segments."""
     if not mute_segments:
         return None
-    filter_parts = [f"volume=0:enable='between(t,{start},{end})'" for start, end in mute_segments]
-    return ",".join(filter_parts)
+    
+    # Create enable conditions for each segment
+    enable_conditions = []
+    for start, end in mute_segments:
+        enable_conditions.append(f"between(t,{start},{end})")
+    
+    # Combine all conditions with OR logic
+    combined_condition = "+".join(enable_conditions)
+    
+    return f"volume=0:enable='{combined_condition}'"
 
 
 def create_video_filter(black_segments):
@@ -217,7 +226,8 @@ def apply_blank_video_to_segments(input_video, output_path, speech_segments, bla
         concat_list_path = temp_dir / "concat_list.txt"
         with open(concat_list_path, "w") as f:
             for segment_type, segment_path in timeline:
-                f.write(f"file '{segment_path.resolve()}'\n")
+                normalized_path = normalize_path_for_ffmpeg(segment_path)
+                f.write(f"file '{normalized_path}'\n")
 
         # Concatenate all segments using stream copy
         concat_cmd = [

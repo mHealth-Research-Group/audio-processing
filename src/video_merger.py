@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import List, Tuple, Optional, Dict, Any
 
-from .utils import run_subprocess_with_encoding, is_video_file
+from .utils import run_subprocess_with_encoding, normalize_path_for_ffmpeg, is_video_file
 
 logger = logging.getLogger(__name__)
 
@@ -166,7 +166,7 @@ def create_gap_video_from_blank(blank_video_path: Path, output_path: Path, durat
         try:
             with open(temp_list, "w") as f:
                 for _ in range(loops):
-                    f.write(f"file '{blank_video_path.resolve()}'\n")
+                    f.write(f"file '{normalize_path_for_ffmpeg(blank_video_path)}'\n")
 
             cmd = [
                 "ffmpeg",
@@ -256,10 +256,10 @@ def merge_videos(
             gap_index = 0
             for item_type, _, item_path in timeline:
                 if item_type == "video":
-                    f.write(f"file '{item_path.resolve()}'\n")
+                    f.write(f"file '{normalize_path_for_ffmpeg(item_path)}'\n")
                 elif item_type == "gap":
                     gap_video = gap_videos[gap_index]
-                    f.write(f"file '{gap_video.resolve()}'\n")
+                    f.write(f"file '{normalize_path_for_ffmpeg(gap_video)}'\n")
                     gap_index += 1
 
         cmd = [
