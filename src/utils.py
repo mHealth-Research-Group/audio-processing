@@ -38,21 +38,6 @@ def run_subprocess_with_encoding(*args, **kwargs):
     return subprocess.run(*args, **kwargs)
 
 
-def detect_file_encoding(file_path):
-    """Debug function to detect file encoding and BOM."""
-    with open(file_path, "rb") as f:
-        first_bytes = f.read(10)
-
-    if first_bytes.startswith(b"\\xff\\xfe"):
-        return "utf-16-le"
-    elif first_bytes.startswith(b"\\xfe\\xff"):
-        return "utf-16-be"
-    elif first_bytes.startswith(b"\\xef\\xbb\\xbf"):
-        return "utf-8-sig"
-    else:
-        return "utf-8"
-
-
 def load_timeline(timeline_path):
     """Load timeline from JSON file, trying multiple encodings."""
     encodings_to_try = ["utf-8", "utf-8-sig", "utf-16", "utf-16-le", "utf-16-be", "cp1252", "latin1"]

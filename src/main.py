@@ -6,8 +6,7 @@ from .commands import (
     process_directory,
     process_single_file,
     apply_timeline_edits_command,
-    apply_effects_command,
-    debug_encoding_command,
+    apply_blank_command,
 )
 from .utils import ensure_utf8_encoding
 
@@ -27,7 +26,7 @@ def add_process_arguments(parser):
     parser.add_argument(
         "--complete",
         action="store_true",
-        help="Enable complete processing (equivalent to --merge-videos --generate-timeline --analyze-speakers --no-h264)",
+        help="Enable complete processing (equivalent to --merge-videos --generate-timeline --analyze-speakers)",
     )
 
     parser.add_argument(
@@ -96,24 +95,10 @@ def add_process_arguments(parser):
         default=None,
         help="Maximum gap duration (seconds) to fill with black frames when merging videos.",
     )
-
-    # H264 conversion options
     parser.add_argument(
-        "--no-h264",
-        action="store_true",
-        help="Skip H264 conversion (keeps original codec).",
-    )
-    parser.add_argument(
-        "--h264-preset",
-        choices=["ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow", "slower", "veryslow"],
-        default="faster",
-        help="H264 encoding preset (speed vs quality trade-off).",
-    )
-    parser.add_argument(
-        "--h264-crf",
-        type=int,
-        default=28,
-        help="H264 constant rate factor (0-51, lower = better quality).",
+        "--blank-video",
+        required=False,
+        help="Path to blank video file to use for gap filling (required for merging).",
     )
 
 
@@ -136,21 +121,17 @@ def main():
             help="Labels to apply effects to (e.g., speaking)",
         )
 
-        effects_parser = subparsers.add_parser("apply-effects", help="Apply effects to time ranges")
-        effects_parser.add_argument("input_path", help="Path to input media file")
-        effects_parser.add_argument("time_ranges", nargs="+", help="Time ranges (e.g., '1:30-2:45')")
-        effects_parser.add_argument("-o", "--output", help="Path for output file")
-        effects_parser.add_argument("--effect", default="all", choices=["black", "mute", "all"], help="Effect to apply")
-
-        debug_parser = subparsers.add_parser("debug-encoding", help="Debug file encoding")
-        debug_parser.add_argument("file_path", help="Path to file to analyze")
+        blank_parser = subparsers.add_parser("apply-blank", help="Replace timeline segments with blank video")
+        blank_parser.add_argument("input_video", help="Path to input video file")
+        blank_parser.add_argument("timeline", help="Path to timeline JSON file")
+        blank_parser.add_argument("--blank-video", required=True, help="Path to blank video file")
+        blank_parser.add_argument("-o", "--output", help="Path for output file")
 
         args_list = sys.argv[1:]
         if not args_list or args_list[0] not in [
             "process",
             "apply-edits",
-            "apply-effects",
-            "debug-encoding",
+            "apply-blank",
         ]:
             if args_list and (Path(args_list[0]).exists() or Path(args_list[0]).is_dir()):
                 args_list.insert(0, "process")
@@ -166,11 +147,7 @@ def main():
             args.merge_videos = True
             args.generate_timeline = True
             args.analyze_speakers = True
-            args.no_h264 = True
-            print("🚀 Complete processing enabled: --merge-videos --generate-timeline --analyze-speakers --no-h264")
-
-        # Handle H264 conversion - enabled by default, disabled with --no-h264
-        args.convert_h264 = not getattr(args, "no_h264", False)
+            print("Complete processing enabled: --merge-videos --generate-timeline --analyze-speakers")
 
         if args.mode == "process":
             if Path(args.input_path).is_dir():
@@ -179,10 +156,8 @@ def main():
                 return process_single_file(args)
         elif args.mode == "apply-edits":
             return apply_timeline_edits_command(args)
-        elif args.mode == "apply-effects":
-            return apply_effects_command(args)
-        elif args.mode == "debug-encoding":
-            return debug_encoding_command(args)
+        elif args.mode == "apply-blank":
+            return apply_blank_command(args)
         else:
             parser.print_help()
             return 1

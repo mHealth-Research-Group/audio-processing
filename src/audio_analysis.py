@@ -378,13 +378,13 @@ def _handle_speaker_and_timeline_analysis(args, input_path, model):
         if args.detailed_analysis:
             speaker_analysis = analyze_speaker_segments_direct(input_path, model)
             print("Detailed Speaker Analysis Results:")
-            print(f"   Multiple speakers detected: {'✓ YES' if speaker_analysis['has_multiple_speakers'] else '✗ NO'}")
+            print(f"   Multiple speakers detected: {'YES' if speaker_analysis['has_multiple_speakers'] else 'NO'}")
             print(f"   Maximum speakers detected: {speaker_analysis['max_speakers_detected']}")
             print(f"   Confidence score: {speaker_analysis['confidence_score']:.2f}")
         else:
             speaker_analysis = detect_multiple_speakers(input_path, model, args.min_duration_on, args.min_duration_off)
             print("Speaker Analysis Results:")
-            print(f"   Multiple speakers detected: {'✓ YES' if speaker_analysis['has_multiple_speakers'] else '✗ NO'}")
+            print(f"   Multiple speakers detected: {'YES' if speaker_analysis['has_multiple_speakers'] else 'NO'}")
             print(f"   Overlap percentage: {speaker_analysis['overlap_percentage']:.1f}%")
 
     timeline_data = None

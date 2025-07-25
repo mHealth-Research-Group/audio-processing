@@ -6,14 +6,10 @@ import subprocess
 import json
 
 from .audio_analysis import (
-    analyze_speaker_segments_direct,
-    detect_multiple_speakers,
     detect_voice_segments,
-    generate_speaker_timeline,
     load_model,
 )
 from .media_processing import (
-    apply_effects_to_time_ranges,
     extract_audio_from_video,
     extract_segments_by_effects,
     process_media_with_effects,
@@ -29,42 +25,6 @@ from .utils import (
     mmss_to_seconds,
 )
 from .video_merger import merge_videos
-
-
-def _handle_speaker_and_timeline_analysis(args, audio_path, model):
-    """Helper to handle speaker analysis and timeline generation."""
-    if args.analyze_speakers or args.speaker_analysis_only:
-        print(f"Analyzing speakers in: {audio_path}")
-        if args.detailed_analysis:
-            speaker_analysis = analyze_speaker_segments_direct(audio_path, model)
-            print("Detailed Speaker Analysis Results:")
-            print(
-                "   Multiple speakers detected:",
-                "✓ YES" if speaker_analysis["has_multiple_speakers"] else "✗ NO",
-            )
-            print(f"   Maximum speakers detected: {speaker_analysis['max_speakers_detected']}")
-            print(f"   Confidence score: {speaker_analysis['confidence_score']:.2f}")
-        else:
-            speaker_analysis = detect_multiple_speakers(audio_path, model, args.min_duration_on, args.min_duration_off)
-            print("Speaker Analysis Results:")
-            print(
-                "   Multiple speakers detected:",
-                "✓ YES" if speaker_analysis["has_multiple_speakers"] else "✗ NO",
-            )
-            print(f"   Overlap percentage: {speaker_analysis['overlap_percentage']:.1f}%")
-
-    timeline_data = None
-    voice_segments = None
-    if args.generate_timeline:
-        print("Generating speaker timeline...")
-        timeline_data = generate_speaker_timeline(audio_path, model, args.min_duration_on, args.min_duration_off)
-        if timeline_data and "timeline" in timeline_data:
-            voice_segments = [
-                (mmss_to_seconds(s["start"]), mmss_to_seconds(s["end"]))
-                for s in timeline_data["timeline"]
-                if s["type"] == "speech"
-            ]
-    return voice_segments, timeline_data
 
 
 def process_single_file(args):
@@ -118,6 +78,8 @@ def process_single_file(args):
             timeline_data = None
 
             if audio_for_analysis and needs_audio_analysis:
+                from .audio_analysis import _handle_speaker_and_timeline_analysis
+
                 voice_segments, timeline_data = _handle_speaker_and_timeline_analysis(args, audio_for_analysis, model)
 
                 if voice_segments is None and not args.speaker_analysis_only:
@@ -165,71 +127,6 @@ def process_single_file(args):
         return 1
 
 
-def check_existing_merged_video(output_path: Path, input_dir: Path, force_overwrite: bool = False) -> bool:
-    """
-    Check if merged video already exists and prompt user for action.
-
-    Args:
-        output_path: Proposed output path for merged video
-        input_dir: Input directory (to check for existing merged_video.mp4)
-        force_overwrite: If True, automatically overwrite without prompting
-
-    Returns:
-        True if should proceed with merge, False if should skip
-    """
-    if force_overwrite:
-        if output_path.exists():
-            print(f"Overwriting existing merged video: {output_path}")
-        return True
-
-    # Check if the specific output path exists
-    if output_path.exists():
-        print(f"\nMerged video already exists: {output_path}")
-        while True:
-            response = input("Do you want to (o)verwrite, (s)kip, or (q)uit? [o/s/q]: ").lower().strip()
-            if response in ["o", "overwrite"]:
-                print("Overwriting existing merged video...")
-                return True
-            elif response in ["s", "skip"]:
-                print("Skipping merge operation...")
-                return False
-            elif response in ["q", "quit"]:
-                print("Quitting...")
-                sys.exit(0)
-            else:
-                print("Please enter 'o' for overwrite, 's' for skip, or 'q' for quit.")
-
-    # Also check for common merged video names in input directory
-    common_names = ["merged_video.mp4", "merged_video_h264.mp4"]
-    existing_files = []
-
-    for name in common_names:
-        potential_file = input_dir / name
-        if potential_file.exists() and potential_file != output_path:
-            existing_files.append(potential_file)
-
-    if existing_files:
-        print("\nFound existing merged video(s) in input directory:")
-        for file in existing_files:
-            print(f"  - {file.name}")
-
-        while True:
-            response = input("Do you want to (o)verwrite, (s)kip, or (q)uit? [o/s/q]: ").lower().strip()
-            if response in ["o", "overwrite"]:
-                print("Proceeding with merge (existing files will remain)...")
-                return True
-            elif response in ["s", "skip"]:
-                print("Skipping merge operation...")
-                return False
-            elif response in ["q", "quit"]:
-                print("Quitting...")
-                sys.exit(0)
-            else:
-                print("Please enter 'o' for overwrite, 's' for skip, or 'q' for quit.")
-
-    return True
-
-
 def process_directory(args):
     """Process all media files in a directory."""
     input_dir = Path(args.input_path)
@@ -247,7 +144,7 @@ def process_directory(args):
         # Output is a directory for multiple processed files
         output_dir = Path(args.output) if args.output else input_dir
         output_dir.mkdir(parents=True, exist_ok=True)
-    
+
     timeline_dir = Path(args.timeline_output) if args.timeline_output else output_dir
     timeline_dir.mkdir(parents=True, exist_ok=True)
 
@@ -283,20 +180,31 @@ def process_directory(args):
         if args.output:
             merged_output = Path(args.output)
         else:
-            merged_output = output_dir / f"merged_video{'_h264' if getattr(args, 'convert_h264', True) else ''}.mp4"
+            merged_output = output_dir / "merged_video.mp4"
 
         # Check if merged video already exists and prompt user
-        if not check_existing_merged_video(merged_output, input_dir, getattr(args, "force_overwrite", False)):
+        if merged_output.exists() and not getattr(args, "force_overwrite", False):
+            print(f"Merged video already exists: {merged_output}. Use --force-overwrite to replace it.")
             return 0  # Skip merge operation
 
-        # Merge videos with optional H264 conversion
+        # Check if blank video is provided for merging
+        if not getattr(args, "blank_video", None):
+            print("Error: --blank-video is required for video merging", file=sys.stderr)
+            return 1
+
+        blank_video_path = Path(args.blank_video)
+        if not blank_video_path.exists():
+            print(f"Error: Blank video file not found: {blank_video_path}", file=sys.stderr)
+            return 1
+
+        # Merge videos using blank video approach
         try:
             merge_videos(
                 input_dir=input_dir,
                 output_path=merged_output,
+                blank_video=blank_video_path,
                 min_gap_threshold=getattr(args, "min_gap_threshold", 0.5),
                 max_gap_threshold=getattr(args, "max_gap_threshold", None),
-                convert_h264=getattr(args, "convert_h264", True),
             )
         except Exception as e:
             print(f"Video merging failed: {e}", file=sys.stderr)
@@ -304,8 +212,13 @@ def process_directory(args):
 
         print(f"Video merging completed successfully: {merged_output}")
 
-        # Process the merged video if other analysis options are enabled
-        if args.analyze_speakers or args.speaker_analysis_only or args.generate_timeline or not args.merge_only:
+        # Process the merged video if analysis/processing options are enabled
+        if (
+            args.analyze_speakers
+            or args.speaker_analysis_only
+            or args.generate_timeline
+            or not getattr(args, "merge_only", False)
+        ):
             print("\nProcessing merged video for speech analysis...")
             file_args = argparse.Namespace(**vars(args))
             file_args.input_path = str(merged_output)
@@ -313,7 +226,9 @@ def process_directory(args):
             # Determine the base output path for the processed file and timeline
             if args.output:
                 base_output_path = Path(args.output)
-                file_args.output = str(base_output_path)
+                file_args.output = str(
+                    base_output_path.parent / f"{base_output_path.stem}_processed{base_output_path.suffix}"
+                )
             else:
                 base_output_path = merged_output
                 file_args.output = str(
@@ -326,7 +241,18 @@ def process_directory(args):
             elif args.generate_timeline:
                 file_args.timeline_output = str(timeline_dir / f"{base_output_path.stem}_timeline.json")
 
-            return process_single_file(file_args)
+            # Process the merged video (this will mute conversations by default)
+            result = process_single_file(file_args)
+
+            # Add instructions for manual blank video application if timeline was generated
+            if args.generate_timeline:
+                timeline_path = file_args.timeline_output
+                print(f"\nTimeline generated: {timeline_path}")
+                print("To manually review and apply blank video to specific segments:")
+                print("  1. Edit the timeline JSON file - change 'type' to 'all' for segments you want blanked")
+                print(f"  2. Run: python main.py apply-blank {merged_output} {timeline_path} --blank-video blank.MP4")
+
+            return result
 
         return 0
 
@@ -411,36 +337,57 @@ def apply_timeline_edits_command(args):
     return 0
 
 
-def apply_effects_command(args):
-    """Apply effects to specific time ranges."""
-    input_path = Path(args.input_path)
-    if not input_path.exists():
-        print(f"Error: Input file not found: {input_path}", file=sys.stderr)
+def apply_blank_command(args):
+    """Apply blank video to speech segments from timeline."""
+    input_video = Path(args.input_video)
+    timeline_path = Path(args.timeline)
+    blank_video_path = Path(args.blank_video)
+
+    # Validate inputs
+    if not input_video.exists():
+        print(f"Error: Input video not found: {input_video}", file=sys.stderr)
         return 1
-    if not (is_video_file(input_path) or is_audio_file(input_path)):
-        print(f"Error: Unsupported file format for {input_path}", file=sys.stderr)
+    if not timeline_path.exists():
+        print(f"Error: Timeline file not found: {timeline_path}", file=sys.stderr)
+        return 1
+    if not blank_video_path.exists():
+        print(f"Error: Blank video not found: {blank_video_path}", file=sys.stderr)
         return 1
 
+    # Set output path
     output_path = (
-        Path(args.output) if args.output else input_path.parent / f"{input_path.stem}_effects{input_path.suffix}"
+        Path(args.output) if args.output else input_video.parent / f"{input_video.stem}_blanked{input_video.suffix}"
     )
+
     try:
-        apply_effects_to_time_ranges(input_path, output_path, args.time_ranges, args.effect)
-        print(f"Effects applied successfully: {output_path}")
+        # Load timeline data
+        with open(timeline_path, "r", encoding="utf-8") as f:
+            timeline_data = json.load(f)
+
+        # Extract segments marked as "all" for blank video replacement
+        blank_segments = []
+        if "timeline" in timeline_data:
+            for segment in timeline_data["timeline"]:
+                if segment.get("type") == "all":
+                    start_time = mmss_to_seconds(segment["start"])
+                    end_time = mmss_to_seconds(segment["end"])
+                    blank_segments.append((start_time, end_time))
+
+        if not blank_segments:
+            print("No segments marked as 'all' found in timeline")
+            print("To mark segments for blank video replacement, edit the timeline JSON and change 'type' to 'all'")
+            return 0
+
+        print(f"Found {len(blank_segments)} segments marked as 'all' to replace with blank video")
+
+        # Apply blank video to marked segments
+        from .media_processing import apply_blank_video_to_segments
+
+        apply_blank_video_to_segments(input_video, output_path, blank_segments, blank_video_path)
+
+        print(f"Blank video applied successfully: {output_path}")
         return 0
+
     except Exception as e:
-        print(f"Error applying effects: {e}", file=sys.stderr)
+        print(f"Error applying blank video: {e}", file=sys.stderr)
         return 1
-
-
-def debug_encoding_command(args):
-    """Debug file encoding issues."""
-    file_path = Path(args.file_path)
-    if not file_path.exists():
-        print(f"Error: File not found: {file_path}", file=sys.stderr)
-        return 1
-    from .utils import detect_file_encoding
-
-    detected_encoding = detect_file_encoding(file_path)
-    print(f"Suggested encoding: {detected_encoding}")
-    return 0
