@@ -187,11 +187,7 @@ def process_directory(args):
             print(f"Merged video already exists: {merged_output}. Use --force-overwrite to replace it.")
             return 0  # Skip merge operation
 
-        # Check if blank video is provided for merging
-        if not getattr(args, "blank_video", None):
-            print("Error: --blank-video is required for video merging", file=sys.stderr)
-            return 1
-
+        # Check if blank video file exists
         blank_video_path = Path(args.blank_video)
         if not blank_video_path.exists():
             print(f"Error: Blank video file not found: {blank_video_path}", file=sys.stderr)

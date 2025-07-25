@@ -97,8 +97,8 @@ def add_process_arguments(parser):
     )
     parser.add_argument(
         "--blank-video",
-        required=False,
-        help="Path to blank video file to use for gap filling (required for merging).",
+        default="blank_muted.MP4",
+        help="Path to blank video file to use for gap filling (default: blank_muted.MP4).",
     )
 
 

@@ -10,15 +10,17 @@ For most use cases, the `--complete` flag provides a comprehensive processing pi
 
 ```bash
 # Process a directory of timestamped videos with the complete pipeline
-uv run main.py process /path/to/videos --complete --output final_video.mp4 --blank-video blank.mp4
+uv run main.py process /path/to/videos --complete --output final_video.mp4
 ```
 
 This command performs the following actions:
 1. **Merges** all timestamped videos in chronological order.
-2. **Fills gaps** between videos with a blank video.
+2. **Fills gaps** between videos with a blank video (using the default `blank_muted.MP4`).
 3. **Analyzes speakers** to detect conversations.
 4. **Generates a timeline** (`.json`) with detected speech segments.
 5. **Creates a processed video** with conversations muted.
+
+**Note**: Video merging is automatic for directories containing timestamped videos. The tool uses `blank_muted.MP4` as the default blank video file for gap filling.
 
 ## Installation
 
@@ -49,11 +51,11 @@ This command performs the following actions:
 The `process` command is the main entry point for all processing tasks. It can handle both single files and directories.
 
 ```bash
-# Basic processing of a directory
+# Basic processing of a directory (automatically merges timestamped videos)
 uv run main.py process /path/to/videos --output-dir /path/to/output
 
 # Merge-only: merge videos without speech analysis
-uv run main.py process /path/to/videos --merge-only --output merged_video.mp4 --blank-video blank.mp4
+uv run main.py process /path/to/videos --merge-only --output merged_video.mp4
 
 # Full analysis with timeline generation
 uv run main.py process /path/to/videos --generate-timeline --analyze-speakers
@@ -89,7 +91,7 @@ Open the generated `_timeline.json` file and modify the `"type"` of any segment 
 **3. Apply the changes:**
 Use the `apply-blank` command to replace the marked segments with a blank video.
 ```bash
-uv run main.py apply-blank video.mp4 video_timeline.json --blank-video blank.mp4 -o final_video.mp4
+uv run main.py apply-blank video.mp4 video_timeline.json -o final_video.mp4
 ```
 
 ## File Naming Convention
@@ -127,4 +129,4 @@ The tool will detect the 5-minute gap between these files and fill it with a bla
 - `--force-overwrite` or `-f`: Overwrites existing merged videos without prompting.
 - `--min-gap-threshold`: The minimum gap duration (in seconds) to fill with a blank video. Default is `2`.
 - `--max-gap-threshold`: The maximum gap duration (in seconds) to fill.
-- `--blank-video`: The path to the blank video file to use for filling gaps. This is required for merging.
+- `--blank-video`: The path to the blank video file to use for filling gaps (default: blank_muted.MP4).
