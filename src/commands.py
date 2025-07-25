@@ -400,3 +400,72 @@ def apply_blank_command(args):
     except Exception as e:
         print(f"Error applying blank video: {e}", file=sys.stderr)
         return 1
+
+
+def compress_command(args):
+    """Compress video files to H.264 with smaller file sizes."""
+    from pathlib import Path
+    from .media_processing import compress_video
+    from .utils import is_video_file, find_media_files
+
+    input_path = Path(args.input_path)
+
+    if not input_path.exists():
+        print(f"Error: Input path not found: {input_path}", file=sys.stderr)
+        return 1
+
+    # Handle single file vs directory
+    if input_path.is_file():
+        if not is_video_file(input_path):
+            print(f"Error: {input_path} is not a video file", file=sys.stderr)
+            return 1
+
+        output_path = args.output if args.output else None
+
+        try:
+            compress_video(
+                input_path=input_path,
+                output_path=output_path,
+                quality=str(args.quality),
+                preset=args.preset,
+                max_width=args.max_width if args.max_width > 0 else None,
+            )
+            return 0
+        except Exception as e:
+            print(f"Error compressing {input_path}: {e}", file=sys.stderr)
+            return 1
+
+    elif input_path.is_dir():
+        # Process all video files in directory
+        video_files = [f for f in find_media_files(input_path) if is_video_file(f)]
+
+        if not video_files:
+            print(f"No video files found in {input_path}")
+            return 0
+
+        # Set up output directory
+        output_dir = Path(args.output) if args.output else input_path / "compressed"
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        success_count = 0
+        for video_file in video_files:
+            output_path = output_dir / f"{video_file.stem}_compressed{video_file.suffix}"
+
+            try:
+                compress_video(
+                    input_path=video_file,
+                    output_path=output_path,
+                    quality=str(args.quality),
+                    preset=args.preset,
+                    max_width=args.max_width if args.max_width > 0 else None,
+                )
+                success_count += 1
+            except Exception as e:
+                print(f"Error compressing {video_file.name}: {e}", file=sys.stderr)
+
+        print(f"Compression complete: {success_count}/{len(video_files)} files processed")
+        return 0 if success_count > 0 else 1
+
+    else:
+        print(f"Error: {input_path} is neither a file nor directory", file=sys.stderr)
+        return 1

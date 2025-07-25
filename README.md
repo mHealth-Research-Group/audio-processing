@@ -94,6 +94,8 @@ Use the `apply-blank` command to replace the marked segments with a blank video.
 uv run main.py apply-blank video.mp4 video_timeline.json -o final_video.mp4
 ```
 
+**Note:** After processing, segments that were marked as `"type": "all"` will automatically have their `"label"` updated to `"removed"` in the timeline file, making it easy to track which segments have been processed.
+
 ## File Naming Convention
 
 For automatic video merging, your files must be named using a timestamp format:
@@ -113,6 +115,7 @@ The tool will detect the 5-minute gap between these files and fill it with a bla
 - `process`: The main command for processing files and directories.
 - `apply-edits`: Applies edits from a timeline file to a media file.
 - `apply-blank`: Replaces segments in a video with a blank video based on a timeline.
+- `compress`: Compresses video files to H.264 with smaller file sizes.
 
 ### Processing Flags
 
@@ -130,3 +133,25 @@ The tool will detect the 5-minute gap between these files and fill it with a bla
 - `--min-gap-threshold`: The minimum gap duration (in seconds) to fill with a blank video. Default is `2`.
 - `--max-gap-threshold`: The maximum gap duration (in seconds) to fill.
 - `--blank-video`: The path to the blank video file to use for filling gaps (default: blank_muted.MP4).
+
+### Compression Command
+
+The `compress` command converts videos to H.264 with optimized settings for smaller file sizes:
+
+```bash
+# Compress a single video file
+uv run main.py compress input_video.mp4 -o compressed_video.mp4
+
+# Compress all videos in a directory
+uv run main.py compress /path/to/videos --output /path/to/compressed
+
+# Adjust compression settings
+uv run main.py compress video.mp4 --quality 20 --preset slow --max-width 1280
+```
+
+**Compression Options:**
+- `--quality`: Video quality (CRF value, 18-28 typical range). Lower = better quality, higher file size (default: 23)
+- `--preset`: Encoding speed preset - `ultrafast`, `fast`, `medium`, `slow`, `veryslow` (default: fast)
+- `--max-width`: Maximum width for output video. Set to 0 to disable scaling (default: 1280)
+
+The compression uses H.264 video codec with AAC audio, optimized for web streaming and broad compatibility.

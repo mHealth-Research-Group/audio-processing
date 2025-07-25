@@ -41,19 +41,19 @@ def run_subprocess_with_encoding(*args, **kwargs):
 def normalize_path_for_ffmpeg(path):
     """
     Normalize path for FFmpeg usage, handling Windows path issues.
-    
+
     Args:
         path: Path object or string
-        
+
     Returns:
         String path safe for FFmpeg usage
     """
     if isinstance(path, str):
         path = Path(path)
-    
+
     # Get absolute path
     abs_path = path.resolve()
-    
+
     # On Windows, convert backslashes to forward slashes for FFmpeg
     if sys.platform.startswith("win"):
         # Convert to string and replace backslashes

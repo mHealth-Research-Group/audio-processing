@@ -7,6 +7,7 @@ from .commands import (
     process_single_file,
     apply_timeline_edits_command,
     apply_blank_command,
+    compress_command,
 )
 from .utils import ensure_utf8_encoding
 
@@ -127,11 +128,33 @@ def main():
         blank_parser.add_argument("--blank-video", required=True, help="Path to blank video file")
         blank_parser.add_argument("-o", "--output", help="Path for output file")
 
+        compress_parser = subparsers.add_parser(
+            "compress", help="Compress video files to H.264 with smaller file sizes"
+        )
+        compress_parser.add_argument("input_path", help="Path to input video file or directory")
+        compress_parser.add_argument("-o", "--output", help="Path for output file or directory")
+        compress_parser.add_argument(
+            "--quality",
+            type=int,
+            default=23,
+            help="Video quality (CRF): lower = better quality, higher file size (default: 23)",
+        )
+        compress_parser.add_argument(
+            "--preset",
+            default="fast",
+            choices=["ultrafast", "fast", "medium", "slow", "veryslow"],
+            help="Encoding preset: ultrafast to veryslow (default: fast)",
+        )
+        compress_parser.add_argument(
+            "--max-width", type=int, default=1280, help="Maximum width for output video, 0 = no scaling (default: 1280)"
+        )
+
         args_list = sys.argv[1:]
         if not args_list or args_list[0] not in [
             "process",
             "apply-edits",
             "apply-blank",
+            "compress",
         ]:
             if args_list and (Path(args_list[0]).exists() or Path(args_list[0]).is_dir()):
                 args_list.insert(0, "process")
@@ -158,6 +181,8 @@ def main():
             return apply_timeline_edits_command(args)
         elif args.mode == "apply-blank":
             return apply_blank_command(args)
+        elif args.mode == "compress":
+            return compress_command(args)
         else:
             parser.print_help()
             return 1

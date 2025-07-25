@@ -53,15 +53,15 @@ def create_audio_filter(mute_segments):
     """Create ffmpeg audio filter to mute specific segments."""
     if not mute_segments:
         return None
-    
+
     # Create enable conditions for each segment
     enable_conditions = []
     for start, end in mute_segments:
         enable_conditions.append(f"between(t,{start},{end})")
-    
+
     # Combine all conditions with OR logic
     combined_condition = "+".join(enable_conditions)
-    
+
     return f"volume=0:enable='{combined_condition}'"
 
 
@@ -251,3 +251,78 @@ def apply_blank_video_to_segments(input_video, output_path, speech_segments, bla
         # Clean up temporary directory
         if temp_dir.exists():
             shutil.rmtree(temp_dir)
+
+
+def compress_video(input_path, output_path=None, quality="23", preset="medium", max_width=1920):
+    """
+    Compress a video to H.264 with smaller file size.
+
+    Args:
+        input_path: Path to input video file
+        output_path: Path for output file (optional, will auto-generate if not provided)
+        quality: CRF value for quality (lower = better quality, higher file size)
+        preset: Encoding preset (ultrafast, fast, medium, slow, veryslow)
+        max_width: Maximum width for the output video (maintains aspect ratio)
+    """
+    from pathlib import Path
+
+    input_path = Path(input_path)
+
+    if not output_path:
+        output_path = input_path.parent / f"{input_path.stem}_compressed{input_path.suffix}"
+    else:
+        output_path = Path(output_path)
+
+    # Ensure output directory exists
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    print(f"Compressing {input_path.name} to {output_path.name}...")
+    print(f"Settings: CRF={quality}, preset={preset}, max_width={max_width}")
+
+    # Build ffmpeg command for compression
+    ffmpeg_cmd = [
+        "ffmpeg",
+        "-i",
+        str(input_path),
+        "-c:v",
+        "libx264",  # H.264 video codec
+        "-crf",
+        str(quality),  # Quality setting (18-28 typical range)
+        "-preset",
+        preset,  # Encoding speed/compression trade-off
+        "-c:a",
+        "aac",  # AAC audio codec
+        "-b:a",
+        "128k",  # Audio bitrate
+        "-movflags",
+        "+faststart",  # Optimize for web streaming
+        "-pix_fmt",
+        "yuv420p",  # Ensure compatibility
+    ]
+
+    # Add scaling filter if max_width is specified
+    if max_width:
+        scale_filter = f"scale='min({max_width},iw):-2'"
+        ffmpeg_cmd.extend(["-vf", scale_filter])
+
+    # Add output path and overwrite flag
+    ffmpeg_cmd.extend([str(output_path), "-y"])
+
+    try:
+        run_subprocess_with_encoding(ffmpeg_cmd, check=True)
+
+        # Get file sizes for comparison
+        original_size = input_path.stat().st_size
+        compressed_size = output_path.stat().st_size
+        compression_ratio = (1 - compressed_size / original_size) * 100
+
+        print("Compression complete!")
+        print(f"Original size: {original_size / (1024**2):.1f} MB")
+        print(f"Compressed size: {compressed_size / (1024**2):.1f} MB")
+        print(f"Size reduction: {compression_ratio:.1f}%")
+
+        return output_path
+
+    except subprocess.CalledProcessError as e:
+        print(f"Error during compression: {e}")
+        raise
