@@ -203,6 +203,7 @@ def merge_videos(
     blank_video: Path,
     min_gap_threshold: float = 0.5,
     max_gap_threshold: Optional[float] = None,
+    merge_list_path: Optional[Path] = None,
 ) -> None:
     """
     Merges all videos in a directory, filling gaps with black frames using a blank video file.
@@ -213,6 +214,7 @@ def merge_videos(
         blank_video: Path to blank video file to use for gap filling
         min_gap_threshold: Minimum gap duration to fill (default 0.5s)
         max_gap_threshold: Maximum gap duration to fill (None = no limit)
+        merge_list_path: Optional custom path for saving the merge list file
     """
     segments = analyze_video_directory(input_dir)
     if not segments:
@@ -252,6 +254,13 @@ def merge_videos(
 
         # Use concat demuxer for stream copying (no re-encoding) with blank video
         concat_list_path = temp_dir / "concat_list.txt"
+
+        # Also create a permanent copy of the concat list in the output directory
+        if merge_list_path:
+            permanent_concat_list = merge_list_path
+        else:
+            permanent_concat_list = output_path.parent / f"{output_path.stem}_merge_list.txt"
+
         with open(concat_list_path, "w") as f:
             gap_index = 0
             for item_type, _, item_path in timeline:
@@ -261,6 +270,12 @@ def merge_videos(
                     gap_video = gap_videos[gap_index]
                     f.write(f"file '{normalize_path_for_ffmpeg(gap_video)}'\n")
                     gap_index += 1
+
+        # Copy the concat list to permanent location
+        import shutil
+
+        shutil.copy2(concat_list_path, permanent_concat_list)
+        logger.info(f"Merge list saved: {permanent_concat_list}")
 
         cmd = [
             "ffmpeg",

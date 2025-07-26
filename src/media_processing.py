@@ -6,6 +6,31 @@ from .utils import (
 )
 
 
+def detect_nvidia_encoder():
+    """Detect if NVIDIA NVENC encoder is available."""
+    try:
+        # Check if nvidia-smi is available (indicates NVIDIA GPU)
+        subprocess.run(["nvidia-smi"], capture_output=True, check=True)
+
+        # Check if FFmpeg supports h264_nvenc
+        result = subprocess.run(["ffmpeg", "-hide_banner", "-encoders"], capture_output=True, text=True, check=True)
+        return "h264_nvenc" in result.stdout
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return False
+
+
+def get_optimal_encoder_settings():
+    """Get optimal encoder settings based on available hardware."""
+    if detect_nvidia_encoder():
+        return {
+            "video_codec": "h264_nvenc",
+            "preset": "fast",  # NVENC presets: slow, medium, fast, hp, hq, bd, ll, llhq, llhp, lossless
+            "extra_params": ["-gpu", "0", "-rc", "vbr"],  # Variable bitrate for better quality
+        }
+    else:
+        return {"video_codec": "libx264", "preset": "fast", "extra_params": []}
+
+
 def extract_audio_from_video(video_path, audio_path):
     """Extract audio from video file using ffmpeg."""
     print(f"Extracting audio from {video_path} to {audio_path}")
@@ -88,12 +113,19 @@ def process_media_with_effects(input_path, output_path, effect_segments):
         )
         return
 
+    # Get optimal encoder settings
+    encoder_settings = get_optimal_encoder_settings()
+
     audio_filter = create_audio_filter(all_mute_segments)
     video_filter = create_video_filter(all_black_segments)
     ffmpeg_cmd = ["ffmpeg", "-i", str(input_path)]
 
     if video_filter:
-        ffmpeg_cmd.extend(["-vf", video_filter, "-c:v", "libx264", "-preset", "fast"])
+        # Use GPU encoding when video processing is needed
+        ffmpeg_cmd.extend(
+            ["-vf", video_filter, "-c:v", encoder_settings["video_codec"], "-preset", encoder_settings["preset"]]
+        )
+        ffmpeg_cmd.extend(encoder_settings["extra_params"])
     else:
         ffmpeg_cmd.extend(["-c:v", "copy"])
 
@@ -103,6 +135,10 @@ def process_media_with_effects(input_path, output_path, effect_segments):
         ffmpeg_cmd.extend(["-c:a", "copy"])
 
     ffmpeg_cmd.extend([str(output_path), "-y"])
+
+    if encoder_settings["video_codec"] == "h264_nvenc":
+        print("Using NVIDIA GPU encoding (NVENC)")
+
     run_subprocess_with_encoding(ffmpeg_cmd, check=True)
 
 
@@ -269,13 +305,13 @@ def apply_blank_video_to_segments(input_video, output_path, speech_segments, bla
 
 def compress_video(input_path, output_path=None, quality="23", preset="medium", max_width=1920):
     """
-    Compress a video to H.264 with smaller file size.
+    Compress a video to H.264 with smaller file size using GPU acceleration when available.
 
     Args:
         input_path: Path to input video file
         output_path: Path for output file (optional, will auto-generate if not provided)
         quality: CRF value for quality (lower = better quality, higher file size)
-        preset: Encoding preset (ultrafast, fast, medium, slow, veryslow)
+        preset: Encoding preset (varies by encoder)
         max_width: Maximum width for the output video (maintains aspect ratio)
     """
     from pathlib import Path
@@ -290,8 +326,16 @@ def compress_video(input_path, output_path=None, quality="23", preset="medium", 
     # Ensure output directory exists
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
+    # Get optimal encoder settings
+    encoder_settings = get_optimal_encoder_settings()
+
     print(f"Compressing {input_path.name} to {output_path.name}...")
-    print(f"Settings: CRF={quality}, preset={preset}, max_width={max_width}")
+    print(f"Encoder: {encoder_settings['video_codec']}, preset: {encoder_settings['preset']}")
+    if encoder_settings["video_codec"] == "h264_nvenc":
+        print("Using NVIDIA GPU acceleration (NVENC)")
+        print(f"Quality: CQ={quality} (NVENC quality scale)")
+    else:
+        print(f"Quality: CRF={quality} (CPU encoding)")
 
     # Build ffmpeg command for compression
     ffmpeg_cmd = [
@@ -299,20 +343,45 @@ def compress_video(input_path, output_path=None, quality="23", preset="medium", 
         "-i",
         str(input_path),
         "-c:v",
-        "libx264",  # H.264 video codec
-        "-crf",
-        str(quality),  # Quality setting (18-28 typical range)
-        "-preset",
-        preset,  # Encoding speed/compression trade-off
-        "-c:a",
-        "aac",  # AAC audio codec
-        "-b:a",
-        "128k",  # Audio bitrate
-        "-movflags",
-        "+faststart",  # Optimize for web streaming
-        "-pix_fmt",
-        "yuv420p",  # Ensure compatibility
+        encoder_settings["video_codec"],
     ]
+
+    # Add encoder-specific quality settings
+    if encoder_settings["video_codec"] == "h264_nvenc":
+        # NVENC uses different quality parameters
+        ffmpeg_cmd.extend(
+            [
+                "-cq",
+                str(quality),  # Constant Quality mode for NVENC
+                "-preset",
+                encoder_settings["preset"],
+            ]
+        )
+        ffmpeg_cmd.extend(encoder_settings["extra_params"])
+    else:
+        # libx264 uses CRF
+        ffmpeg_cmd.extend(
+            [
+                "-crf",
+                str(quality),
+                "-preset",
+                encoder_settings["preset"],
+            ]
+        )
+
+    # Add common encoding parameters
+    ffmpeg_cmd.extend(
+        [
+            "-c:a",
+            "aac",  # AAC audio codec
+            "-b:a",
+            "128k",  # Audio bitrate
+            "-movflags",
+            "+faststart",  # Optimize for web streaming
+            "-pix_fmt",
+            "yuv420p",  # Ensure compatibility
+        ]
+    )
 
     # Add scaling filter if max_width is specified
     if max_width:
