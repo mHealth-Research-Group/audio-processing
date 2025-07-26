@@ -27,7 +27,7 @@ from .utils import (
 from .video_merger import merge_videos
 
 
-def process_single_file(args):
+def process_single_file(args, gap_info=None):
     """Process a single media file."""
     input_path = Path(args.input_path)
     if not input_path.exists():
@@ -87,6 +87,39 @@ def process_single_file(args):
                     voice_segments = detect_voice_segments(
                         audio_for_analysis, model, args.min_duration_on, args.min_duration_off
                     )
+
+            # Add gap information to timeline if provided
+            if gap_info and timeline_data and gap_info.get("gaps"):
+                from .utils import seconds_to_mmss, mmss_to_seconds
+
+                print(f"DEBUG: Adding {len(gap_info['gaps'])} gaps to timeline")
+
+                for gap in gap_info["gaps"]:
+                    start_offset = gap["start_offset"]
+                    duration = gap["duration"]
+                    end_offset = start_offset + duration
+
+                    gap_segment = {
+                        "start": seconds_to_mmss(start_offset),
+                        "end": seconds_to_mmss(end_offset),
+                        "duration": seconds_to_mmss(duration),
+                        "type": "silence",
+                        "speakers": 0,
+                        "label": "no_video",
+                        "audio_content": "gap",
+                    }
+
+                    # Find insertion point to maintain chronological order
+                    timeline_list = timeline_data.get("timeline", [])
+                    insert_index = 0
+                    for i, segment in enumerate(timeline_list):
+                        segment_start = mmss_to_seconds(segment["start"])
+                        if segment_start > start_offset:
+                            insert_index = i
+                            break
+                        insert_index = i + 1
+
+                    timeline_list.insert(insert_index, gap_segment)
 
             # Save timeline data if generated and timeline_output is specified
             if timeline_data and hasattr(args, "timeline_output") and args.timeline_output:
@@ -195,7 +228,8 @@ def process_directory(args):
 
         # Merge videos using blank video approach
         try:
-            merge_videos(
+            # Get gap information from video merging
+            gap_info = merge_videos(
                 input_dir=input_dir,
                 output_path=merged_output,
                 blank_video=blank_video_path,
@@ -238,7 +272,7 @@ def process_directory(args):
                 file_args.timeline_output = str(timeline_dir / f"{base_output_path.stem}_timeline.json")
 
             # Process the merged video (this will mute conversations by default)
-            result = process_single_file(file_args)
+            result = process_single_file(file_args, gap_info=gap_info)
 
             # Add instructions for manual blank video application if timeline was generated
             if args.generate_timeline:
@@ -383,7 +417,7 @@ def apply_blank_command(args):
         # Apply blank video to marked segments
         from .media_processing import apply_blank_video_to_segments
 
-        apply_blank_video_to_segments(input_video, output_path, blank_segments, blank_video_path)
+        apply_blank_video_to_segments(input_video, output_path, blank_segments, blank_video_path, timeline_path)
 
         # Save updated timeline if segments were modified
         if timeline_modified:

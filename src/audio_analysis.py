@@ -288,14 +288,30 @@ def generate_speaker_timeline(audio_path, model, min_duration_on=0.1, min_durati
                 "end_seconds": end,
             }
             if not voice_active:
-                base_segment.update({"type": "silence", "speakers": 0, "label": "silence"})
+                base_segment.update(
+                    {"type": "silence", "speakers": 0, "label": "silence", "audio_content": "no_speech"}
+                )
                 return base_segment
 
             speaker_count = max(get_speaker_count_at_time(start), get_speaker_count_at_time(end))
             if overlapped or speaker_count > 1:
-                base_segment.update({"type": "speech", "speakers": max(speaker_count, 2), "label": "conversation"})
+                base_segment.update(
+                    {
+                        "type": "speech",
+                        "speakers": max(speaker_count, 2),
+                        "label": "conversation",
+                        "audio_content": "multiple_speakers",
+                    }
+                )
             else:
-                base_segment.update({"type": "speech", "speakers": max(speaker_count, 1), "label": "speaking"})
+                base_segment.update(
+                    {
+                        "type": "speech",
+                        "speakers": max(speaker_count, 1),
+                        "label": "speaking",
+                        "audio_content": "single_speaker",
+                    }
+                )
             return base_segment
 
         for event in all_events:

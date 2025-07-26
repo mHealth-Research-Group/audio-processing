@@ -169,7 +169,7 @@ def extract_segments_by_effects(timeline_data, target_effects=None):
     return segments
 
 
-def apply_blank_video_to_segments(input_video, output_path, speech_segments, blank_video_path):
+def apply_blank_video_to_segments(input_video, output_path, speech_segments, blank_video_path, timeline_path=None):
     """
     Replace speech segments in video with blank video using the same approach as video merging.
     Uses FFmpeg's concat demuxer with stream copy - exactly like gap filling in video merger.
@@ -179,8 +179,9 @@ def apply_blank_video_to_segments(input_video, output_path, speech_segments, bla
         output_path: Path for output video
         speech_segments: List of (start_time, end_time) tuples for speech segments
         blank_video_path: Path to blank video file
+        timeline_path: Optional path to existing timeline JSON to update with VideoRemoved segments
     """
-    from .video_merger import create_gap_video_from_blank, normalize_path_for_ffmpeg
+    from .video_merger import create_gap_video_from_blank
     import shutil
 
     print(f"Applying blank video to {len(speech_segments)} speech segments...")
@@ -262,12 +263,12 @@ def apply_blank_video_to_segments(input_video, output_path, speech_segments, bla
                             str(video_segment_path),
                         ]
                         run_subprocess_with_encoding(extract_cmd, check=True)
-                        f.write(f"file '{normalize_path_for_ffmpeg(video_segment_path)}'\n")
+                        f.write(f"file '{video_segment_path.resolve()}'\n")
                 elif item[0] == "blank":
                     # Use pre-created blank video
                     blank_index = item[3]
                     blank_video = blank_videos[blank_index]
-                    f.write(f"file '{normalize_path_for_ffmpeg(blank_video)}'\n")
+                    f.write(f"file '{blank_video.resolve()}'\n")
 
         # Use concat demuxer with video copy but audio re-encode for reliability
         concat_cmd = [
@@ -296,6 +297,12 @@ def apply_blank_video_to_segments(input_video, output_path, speech_segments, bla
 
         print("Concatenating segments...")
         run_subprocess_with_encoding(concat_cmd, check=True)
+
+        # Add VideoRemoved segments to timeline if path provided
+        if timeline_path and timeline_path.exists():
+            from .video_merger import add_video_removed_to_timeline
+
+            add_video_removed_to_timeline(timeline_path, speech_segments)
 
     finally:
         # Clean up temporary directory

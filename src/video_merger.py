@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import List, Tuple, Optional, Dict, Any
 
-from .utils import run_subprocess_with_encoding, normalize_path_for_ffmpeg, is_video_file
+from .utils import run_subprocess_with_encoding, is_video_file
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +28,225 @@ class VideoSegment:
 
     def __repr__(self) -> str:
         return f"VideoSegment(path={self.file_path.name}, timestamp={self.timestamp}, duration={self.duration:.2f}s)"
+
+
+def format_duration_mmss(seconds: float) -> str:
+    """Format duration in seconds to MM:SS.mmm format."""
+    minutes = int(seconds // 60)
+    seconds = seconds % 60
+    return f"{minutes}:{seconds:06.3f}"
+
+
+def add_video_gaps_to_timeline(
+    timeline_path: Path, segments: List[VideoSegment], gaps: List[Tuple[datetime, float]]
+) -> None:
+    """
+    Add video gap information to existing timeline JSON file.
+
+    Args:
+        timeline_path: Path to existing timeline JSON file
+        segments: List of video segments
+        gaps: List of (gap_start_time, gap_duration) tuples
+    """
+    import json
+    from .utils import mmss_to_seconds, seconds_to_mmss
+
+    try:
+        # Load existing timeline
+        with open(timeline_path, "r") as f:
+            timeline_data = json.load(f)
+
+        if not segments or not gaps:
+            return
+
+        # Start from the first video segment timestamp
+        base_time = segments[0].timestamp
+
+        # Create gap segments to insert
+        gap_segments = []
+        for gap_start, gap_duration in gaps:
+            start_offset = (gap_start - base_time).total_seconds()
+            gap_segments.append(
+                {
+                    "start": seconds_to_mmss(start_offset),
+                    "end": seconds_to_mmss(start_offset + gap_duration),
+                    "duration": seconds_to_mmss(gap_duration),
+                    "type": "gap",
+                    "speakers": 0,
+                    "label": "NoVideo",
+                    "video_content": "missing_video",
+                    "note": "Missing video segment filled with blank video",
+                }
+            )
+
+        # Insert gap segments into timeline, maintaining chronological order
+        existing_timeline = timeline_data.get("timeline", [])
+        for gap_segment in gap_segments:
+            gap_start_seconds = mmss_to_seconds(gap_segment["start"])
+
+            # Find insertion point
+            insert_index = 0
+            for i, segment in enumerate(existing_timeline):
+                segment_start = mmss_to_seconds(segment["start"])
+                if segment_start > gap_start_seconds:
+                    insert_index = i
+                    break
+                insert_index = i + 1
+
+            existing_timeline.insert(insert_index, gap_segment)
+
+        # Save updated timeline
+        with open(timeline_path, "w") as f:
+            json.dump(timeline_data, f, indent=2)
+        logger.info(f"Added {len(gaps)} NoVideo segments to timeline: {timeline_path}")
+
+    except Exception as e:
+        logger.error(f"Failed to update timeline with video gaps: {e}")
+
+
+def save_gap_info(segments: List[VideoSegment], gaps: List[Tuple[datetime, float]], gap_info_path: Path) -> None:
+    """
+    Save gap information to a JSON file for later addition to timeline.
+
+    Args:
+        segments: List of video segments
+        gaps: List of (gap_start_time, gap_duration) tuples
+        gap_info_path: Path to save the gap information
+    """
+    import json
+
+    if not segments or not gaps:
+        return
+
+    base_time = segments[0].timestamp
+    gap_data = {"base_timestamp": base_time.isoformat(), "gaps": []}
+
+    for gap_start, gap_duration in gaps:
+        start_offset = (gap_start - base_time).total_seconds()
+        gap_data["gaps"].append({"start_offset": start_offset, "duration": gap_duration})
+
+    try:
+        with open(gap_info_path, "w") as f:
+            json.dump(gap_data, f, indent=2)
+        logger.info(f"Gap information saved: {gap_info_path}")
+    except Exception as e:
+        logger.error(f"Failed to save gap information: {e}")
+
+
+def apply_saved_gaps_to_timeline(timeline_path: Path, gap_info_path: Path) -> None:
+    """
+    Apply saved gap information to existing timeline.
+
+    Args:
+        timeline_path: Path to existing timeline JSON file
+        gap_info_path: Path to gap information JSON file
+    """
+    import json
+    from .utils import seconds_to_mmss, mmss_to_seconds
+
+    try:
+        if not gap_info_path.exists():
+            return
+
+        # Load gap information
+        with open(gap_info_path, "r") as f:
+            gap_data = json.load(f)
+
+        # Load existing timeline
+        with open(timeline_path, "r") as f:
+            timeline_data = json.load(f)
+
+        existing_timeline = timeline_data.get("timeline", [])
+
+        # Add gap segments
+        for gap in gap_data["gaps"]:
+            start_offset = gap["start_offset"]
+            duration = gap["duration"]
+            end_offset = start_offset + duration
+
+            gap_segment = {
+                "start": seconds_to_mmss(start_offset),
+                "end": seconds_to_mmss(end_offset),
+                "duration": seconds_to_mmss(duration),
+                "type": "silence",
+                "speakers": 0,
+                "label": "no_video",
+                "audio_content": "gap",
+            }
+
+            # Find insertion point to maintain chronological order
+            insert_index = 0
+            for i, segment in enumerate(existing_timeline):
+                segment_start = mmss_to_seconds(segment["start"])
+                if segment_start > start_offset:
+                    insert_index = i
+                    break
+                insert_index = i + 1
+
+            existing_timeline.insert(insert_index, gap_segment)
+
+        # Save updated timeline
+        with open(timeline_path, "w") as f:
+            json.dump(timeline_data, f, indent=2)
+        logger.info(f"Added {len(gap_data['gaps'])} NoVideo segments to timeline: {timeline_path}")
+
+        # Clean up gap info file
+        gap_info_path.unlink()
+
+    except Exception as e:
+        logger.error(f"Failed to apply gaps to timeline: {e}")
+
+
+def add_video_removed_to_timeline(timeline_path: Path, removed_segments: List[Tuple[float, float]]) -> None:
+    """
+    Add VideoRemoved labels to existing timeline JSON file for segments where blank video was applied.
+
+    Args:
+        timeline_path: Path to existing timeline JSON file
+        removed_segments: List of (start_time, end_time) tuples for removed video segments
+    """
+    import json
+    from .utils import mmss_to_seconds, seconds_to_mmss
+
+    try:
+        # Load existing timeline
+        with open(timeline_path, "r") as f:
+            timeline_data = json.load(f)
+
+        existing_timeline = timeline_data.get("timeline", [])
+
+        # Add VideoRemoved segments to timeline
+        for start_time, end_time in removed_segments:
+            duration = end_time - start_time
+            removed_segment = {
+                "start": seconds_to_mmss(start_time),
+                "end": seconds_to_mmss(end_time),
+                "duration": seconds_to_mmss(duration),
+                "type": "silence",
+                "speakers": 0,
+                "label": "VideoRemoved",
+                "audio_content": "speech_removed",
+                "note": "Original video replaced with blank video",
+            }
+
+            # Find insertion point to maintain chronological order
+            insert_index = 0
+            for i, segment in enumerate(existing_timeline):
+                segment_start = mmss_to_seconds(segment["start"])
+                if segment_start > start_time:
+                    insert_index = i
+                    break
+                insert_index = i + 1
+
+            existing_timeline.insert(insert_index, removed_segment)
+
+        # Save updated timeline
+        with open(timeline_path, "w") as f:
+            json.dump(timeline_data, f, indent=2)
+        logger.info(f"Added {len(removed_segments)} VideoRemoved segments to timeline: {timeline_path}")
+
+    except Exception as e:
+        logger.error(f"Failed to update timeline with video removed segments: {e}")
 
 
 def extract_timestamp_from_filename(filename: str) -> Optional[datetime]:
@@ -135,27 +354,33 @@ def detect_gaps(
 def create_gap_video_from_blank(blank_video_path: Path, output_path: Path, duration: float) -> None:
     """
     Creates a gap video by trimming the blank video to the specified duration.
-    Uses stream copy for maximum speed - no encoding required.
-    Automatically removes audio to ensure gaps are silent.
+    Adds silent audio track matching the sample rate of source videos to ensure
+    proper concatenation and muting of gap segments.
     """
-    logger.info(f"Creating {duration:.2f}s gap video from blank video (stream copy)")
+    logger.info(f"Creating {duration:.2f}s gap video from blank video with silent audio")
 
     # If duration is longer than blank video, we need to loop it
     blank_properties = get_video_properties(blank_video_path)
     blank_duration = blank_properties["duration"]
 
     if duration <= blank_duration:
-        # Simple trim - just cut the blank video to the needed duration
+        # Simple trim - cut the blank video and add silent audio
         cmd = [
             "ffmpeg",
             "-y",
             "-i",
             str(blank_video_path),
+            "-f",
+            "lavfi",
+            "-i",
+            "anullsrc=channel_layout=mono:sample_rate=32000",  # Silent audio matching camera specs
             "-t",
             str(duration),
             "-c:v",
             "copy",  # Video stream copy for speed
-            "-an",  # Remove audio to ensure silence
+            "-c:a",
+            "aac",  # Add silent audio track
+            "-shortest",  # Match shortest stream duration
             str(output_path),
         ]
     else:
@@ -166,7 +391,7 @@ def create_gap_video_from_blank(blank_video_path: Path, output_path: Path, durat
         try:
             with open(temp_list, "w") as f:
                 for _ in range(loops):
-                    f.write(f"file '{normalize_path_for_ffmpeg(blank_video_path)}'\n")
+                    f.write(f"file '{blank_video_path.resolve()}'\n")
 
             cmd = [
                 "ffmpeg",
@@ -177,16 +402,24 @@ def create_gap_video_from_blank(blank_video_path: Path, output_path: Path, durat
                 "0",
                 "-i",
                 str(temp_list),
+                "-f",
+                "lavfi",
+                "-i",
+                "anullsrc=channel_layout=mono:sample_rate=32000",  # Silent audio matching camera specs
                 "-t",
                 str(duration),
                 "-c:v",
                 "copy",  # Video stream copy for speed
-                "-an",  # Remove audio to ensure silence
+                "-c:a",
+                "aac",  # Add silent audio track
+                "-shortest",  # Match shortest stream duration
                 str(output_path),
             ]
 
             run_subprocess_with_encoding(cmd, check=True)
-            logger.info(f"Created gap video: {output_path} ({duration:.2f}s) from blank video (looped, muted)")
+            logger.info(
+                f"Created gap video: {output_path} ({duration:.2f}s) from blank video (looped, with silent audio)"
+            )
             return
 
         finally:
@@ -194,7 +427,7 @@ def create_gap_video_from_blank(blank_video_path: Path, output_path: Path, durat
                 temp_list.unlink()
 
     run_subprocess_with_encoding(cmd, check=True)
-    logger.info(f"Created gap video: {output_path} ({duration:.2f}s) from blank video (trimmed, muted)")
+    logger.info(f"Created gap video: {output_path} ({duration:.2f}s) from blank video (trimmed, with silent audio)")
 
 
 def merge_videos(
@@ -204,7 +437,7 @@ def merge_videos(
     min_gap_threshold: float = 0.5,
     max_gap_threshold: Optional[float] = None,
     merge_list_path: Optional[Path] = None,
-) -> None:
+) -> Optional[Dict[str, Any]]:
     """
     Merges all videos in a directory, filling gaps with black frames using a blank video file.
 
@@ -215,6 +448,7 @@ def merge_videos(
         min_gap_threshold: Minimum gap duration to fill (default 0.5s)
         max_gap_threshold: Maximum gap duration to fill (None = no limit)
         merge_list_path: Optional custom path for saving the merge list file
+        timeline_path: Optional path for saving timeline with gap information
     """
     segments = analyze_video_directory(input_dir)
     if not segments:
@@ -265,10 +499,10 @@ def merge_videos(
             gap_index = 0
             for item_type, _, item_path in timeline:
                 if item_type == "video":
-                    f.write(f"file '{normalize_path_for_ffmpeg(item_path)}'\n")
+                    f.write(f"file '{item_path.resolve()}'\n")
                 elif item_type == "gap":
                     gap_video = gap_videos[gap_index]
-                    f.write(f"file '{normalize_path_for_ffmpeg(gap_video)}'\n")
+                    f.write(f"file '{gap_video.resolve()}'\n")
                     gap_index += 1
 
         # Copy the concat list to permanent location
@@ -299,6 +533,18 @@ def merge_videos(
             logger.info(f"Output path is directory: {output_path.is_dir()}")
         run_subprocess_with_encoding(cmd, check=True)
         logger.info(f"Successfully merged videos to {output_path}")
+
+        # Return gap information for integration into timeline
+        if gaps and segments:
+            base_time = segments[0].timestamp
+            gap_data = []
+            for gap_start, gap_duration in gaps:
+                start_offset = (gap_start - base_time).total_seconds()
+                gap_data.append({"start_offset": start_offset, "duration": gap_duration})
+            print(f"DEBUG: Returning {len(gaps)} gaps for timeline integration")
+            return {"gaps": gap_data}
+
+        return None
 
     finally:
         import shutil

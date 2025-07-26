@@ -15,6 +15,14 @@ EFFECT_CONFIGS = {
     "black": {"mute_audio": False, "black_video": True},
     "mute": {"mute_audio": True, "black_video": False},
     "all": {"mute_audio": True, "black_video": True},
+    "NoVideo": {"mute_audio": False, "black_video": False},  # Missing video segments
+    "VideoRemoved": {"mute_audio": False, "black_video": False},  # Blanked video segments
+    "removed": {"mute_audio": True, "black_video": True},  # General removed content
+    "audio_removed": {"mute_audio": True, "black_video": False},  # Audio-only removal
+    "video_only": {"mute_audio": False, "black_video": True},  # Video-only removal
+    "speaker_1": {"mute_audio": False, "black_video": False},  # Single speaker segments
+    "speaker_2": {"mute_audio": False, "black_video": False},  # Second speaker segments
+    "multiple_speakers": {"mute_audio": False, "black_video": False},  # Multiple speaker segments
 }
 
 
@@ -81,6 +89,13 @@ def mmss_to_seconds(mmss_str):
     minutes = int(parts[0])
     seconds = float(parts[1])
     return minutes * 60 + seconds
+
+
+def seconds_to_mmss(seconds):
+    """Convert seconds to MM:SS.mmm format."""
+    minutes = int(seconds // 60)
+    secs = seconds % 60
+    return f"{minutes}:{secs:06.3f}"
 
 
 def parse_time_range(time_str):
