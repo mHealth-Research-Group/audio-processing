@@ -5,12 +5,13 @@ Video merging functionality for processing multiple timestamped videos.
 import json
 import logging
 import re
+import shutil
 import subprocess
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import List, Tuple, Optional, Dict, Any
 
-from .utils import run_subprocess_with_encoding, is_video_file
+from .utils import run_subprocess_with_encoding, is_video_file, mmss_to_seconds, seconds_to_mmss
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +29,17 @@ class VideoSegment:
 
     def __repr__(self) -> str:
         return f"VideoSegment(path={self.file_path.name}, timestamp={self.timestamp}, duration={self.duration:.2f}s)"
+
+
+def _parse_frame_rate(fr_string: str) -> float:
+    """Safely parse frame rate string like '30/1' or '29.97'."""
+    if "/" in fr_string:
+        num, den = fr_string.split("/")
+        try:
+            return float(num) / float(den)
+        except ZeroDivisionError:
+            return 0.0
+    return float(fr_string)
 
 
 def format_duration_mmss(seconds: float) -> str:
@@ -48,9 +60,6 @@ def add_video_gaps_to_timeline(
         segments: List of video segments
         gaps: List of (gap_start_time, gap_duration) tuples
     """
-    import json
-    from .utils import mmss_to_seconds, seconds_to_mmss
-
     try:
         # Load existing timeline
         with open(timeline_path, "r") as f:
@@ -113,8 +122,6 @@ def save_gap_info(segments: List[VideoSegment], gaps: List[Tuple[datetime, float
         gaps: List of (gap_start_time, gap_duration) tuples
         gap_info_path: Path to save the gap information
     """
-    import json
-
     if not segments or not gaps:
         return
 
@@ -141,9 +148,6 @@ def apply_saved_gaps_to_timeline(timeline_path: Path, gap_info_path: Path) -> No
         timeline_path: Path to existing timeline JSON file
         gap_info_path: Path to gap information JSON file
     """
-    import json
-    from .utils import seconds_to_mmss, mmss_to_seconds
-
     try:
         if not gap_info_path.exists():
             return
@@ -205,9 +209,6 @@ def add_video_removed_to_timeline(timeline_path: Path, removed_segments: List[Tu
         timeline_path: Path to existing timeline JSON file
         removed_segments: List of (start_time, end_time) tuples for removed video segments
     """
-    import json
-    from .utils import mmss_to_seconds, seconds_to_mmss
-
     try:
         # Load existing timeline
         with open(timeline_path, "r") as f:
@@ -290,10 +291,11 @@ def get_video_properties(video_path: Path) -> Dict[str, Any]:
         if not data.get("streams"):
             raise ValueError("No video stream found.")
         stream = data["streams"][0]
+        r_frame_rate = stream.get("r_frame_rate", "30/1")
         return {
             "width": stream.get("width"),
             "height": stream.get("height"),
-            "fps": eval(stream.get("r_frame_rate", "30/1")),
+            "fps": _parse_frame_rate(r_frame_rate),
             "codec": stream.get("codec_name"),
             "pixel_format": stream.get("pix_fmt", "yuv420p"),
             "duration": float(stream.get("duration", 0)),
@@ -506,8 +508,6 @@ def merge_videos(
                     gap_index += 1
 
         # Copy the concat list to permanent location
-        import shutil
-
         shutil.copy2(concat_list_path, permanent_concat_list)
         logger.info(f"Merge list saved: {permanent_concat_list}")
 
@@ -541,12 +541,10 @@ def merge_videos(
             for gap_start, gap_duration in gaps:
                 start_offset = (gap_start - base_time).total_seconds()
                 gap_data.append({"start_offset": start_offset, "duration": gap_duration})
-            print(f"DEBUG: Returning {len(gaps)} gaps for timeline integration")
+            logger.debug(f"Returning {len(gaps)} gaps for timeline integration")
             return {"gaps": gap_data}
 
         return None
 
     finally:
-        import shutil
-
         shutil.rmtree(temp_dir)

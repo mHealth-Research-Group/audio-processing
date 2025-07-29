@@ -29,6 +29,20 @@ This command performs the following actions:
 - **FFmpeg**: Required for all media processing tasks.
 - **Hugging Face Account**: An access token is needed to download the speaker detection model.
 
+### GPU and CUDA
+
+For GPU acceleration, you need a compatible NVIDIA GPU with the appropriate CUDA Toolkit installed. It is critical that your PyTorch version matches your CUDA version.
+
+- **Check your CUDA version**:
+  ```bash
+  nvcc --version
+  ```
+- **Install the correct PyTorch version**:
+  Visit the [PyTorch website](https://pytorch.org/get-started/locally/) to find the correct installation command for your specific CUDA version. For example, for CUDA 11.8, the command is:
+  ```bash
+  uv add torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+  ```
+
 ### Setup
 
 1. **Clone the repository and install dependencies:**
