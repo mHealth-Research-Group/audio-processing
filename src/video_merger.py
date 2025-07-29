@@ -325,20 +325,20 @@ def analyze_video_directory(directory: Path) -> List[VideoSegment]:
 
 
 def detect_gaps(
-    segments: List[VideoSegment], min_gap_threshold: float = 0.5, max_gap_threshold: Optional[float] = None
+    segments: List[VideoSegment], min_gap_threshold: float = 2.0, max_gap_threshold: Optional[float] = None
 ) -> List[Tuple[datetime, float]]:
     """
     Detects gaps between video segments that meet the threshold criteria.
 
     Args:
         segments: List of video segments sorted by timestamp
-        min_gap_threshold: Minimum gap duration to fill (default 0.5s)
+        min_gap_threshold: Minimum gap duration to fill (default 2.0s)
         max_gap_threshold: Maximum gap duration to fill (None = no limit)
     """
     gaps = []
     for i in range(len(segments) - 1):
         gap_duration = (segments[i + 1].timestamp - segments[i].end_time).total_seconds()
-        if gap_duration >= min_gap_threshold:
+        if gap_duration > min_gap_threshold:
             if max_gap_threshold is None or gap_duration <= max_gap_threshold:
                 gaps.append((segments[i].end_time, gap_duration))
                 logger.info(f"Gap of {gap_duration:.2f}s detected after {segments[i].file_path.name} (will be filled)")
@@ -436,7 +436,7 @@ def merge_videos(
     input_dir: Path,
     output_path: Path,
     blank_video: Path,
-    min_gap_threshold: float = 0.5,
+    min_gap_threshold: float = 2.0,
     max_gap_threshold: Optional[float] = None,
     merge_list_path: Optional[Path] = None,
 ) -> Optional[Dict[str, Any]]:
@@ -447,7 +447,7 @@ def merge_videos(
         input_dir: Directory containing timestamped video files
         output_path: Path for the merged output video
         blank_video: Path to blank video file to use for gap filling
-        min_gap_threshold: Minimum gap duration to fill (default 0.5s)
+        min_gap_threshold: Minimum gap duration to fill (default 2.0s)
         max_gap_threshold: Maximum gap duration to fill (None = no limit)
         merge_list_path: Optional custom path for saving the merge list file
         timeline_path: Optional path for saving timeline with gap information

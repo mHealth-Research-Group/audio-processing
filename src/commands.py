@@ -233,7 +233,7 @@ def process_directory(args):
                 input_dir=input_dir,
                 output_path=merged_output,
                 blank_video=blank_video_path,
-                min_gap_threshold=getattr(args, "min_gap_threshold", 0.5),
+                min_gap_threshold=getattr(args, "min_gap_threshold", 2.0),
                 max_gap_threshold=getattr(args, "max_gap_threshold", None),
             )
         except Exception as e:
