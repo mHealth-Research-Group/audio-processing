@@ -17,7 +17,7 @@ This command performs the following actions:
 1. **Merges** all timestamped videos in chronological order.
 2. **Fills gaps** between videos with a blank video (using the default `blank_muted.MP4`).
 3. **Analyzes speakers** to detect conversations.
-4. **Generates a timeline** (`.json`) with detected speech segments.
+4. **Generates a timeline** (`.yaml`) with detected speech segments.
 5. **Creates a processed video** with conversations muted.
 
 **Note**: Video merging is automatic for directories containing timestamped videos. The tool uses `blank_muted.MP4` as the default blank video file for gap filling.
@@ -38,9 +38,9 @@ For GPU acceleration, you need a compatible NVIDIA GPU with the appropriate CUDA
   nvcc --version
   ```
 - **Install the correct PyTorch version**:
-  Visit the [PyTorch website](https://pytorch.org/get-started/locally/) to find the correct installation command for your specific CUDA version. For example, for CUDA 11.8, the command is:
+  Visit the [PyTorch website](https://pytorch.org/get-started/locally/) to find the correct installation command for your specific CUDA version. For example, for CUDA 12.8, the command is:
   ```bash
-  uv add torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+  uv add torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
   ```
 
 ### Setup
@@ -100,12 +100,12 @@ uv run main.py process video.mp4 --generate-timeline
 ```
 
 **2. Edit the timeline:**
-Open the generated `_timeline.json` file and modify the `"type"` of any segment you want to change. For example, to replace a segment with a blank video, change its `"type"` to `"all"`.
+Open the generated `_timeline.yaml` file and modify the `"type"` of any segment you want to change. For example, to replace a segment with a blank video, change its `"type"` to `"all"`.
 
 **3. Apply the changes:**
 Use the `apply-blank` command to replace the marked segments with a blank video.
 ```bash
-uv run main.py apply-blank video.mp4 video_timeline.json -o final_video.mp4
+uv run main.py apply-blank video.mp4 video_timeline.yaml -o final_video.mp4
 ```
 
 The command uses `blank_muted.MP4` as the default blank video file. You can specify a different blank video with `--blank-video path/to/blank.mp4`.
@@ -138,7 +138,7 @@ The tool will detect the 5-minute gap between these files and fill it with a bla
 - `--complete`: Enables a full processing pipeline, including merging, timeline generation, and speaker analysis.
 - `--merge-videos`: Merges timestamped videos in a directory.
 - `--merge-only`: Merges videos without performing speech analysis.
-- `--generate-timeline`: Creates a JSON timeline file with speech segments.
+- `--generate-timeline`: Creates a YAML timeline file with speech segments.
 - `--analyze-speakers`: Enables speaker detection.
 - `--detailed-analysis`: Uses a more accurate (but slower) speaker analysis model.
 - `--speaker-analysis-only`: Performs speaker analysis without creating an output file.

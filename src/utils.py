@@ -1,11 +1,30 @@
-import json
 import subprocess
 import sys
+import yaml
 from pathlib import Path
 
 # Video and audio file extensions
 VIDEO_EXTENSIONS = {".mp4", ".avi", ".mov", ".mkv", ".webm", ".flv", ".wmv", ".m4v"}
 AUDIO_EXTENSIONS = {".mp3", ".wav", ".flac", ".aac", ".ogg", ".m4a"}
+
+# Audio processing constants
+# Sample rates for different use cases
+SAMPLE_RATE_ML = 16000  # For machine learning models (pyannote, etc.)
+SAMPLE_RATE_CAMERA = 32000  # For camera/recording device compatibility
+SAMPLE_RATE_HIGH_QUALITY = 48000  # For high-quality audio processing
+
+# Audio codec and encoding settings
+AUDIO_CODEC = "aac"  # Standard audio codec for broad compatibility
+AUDIO_BITRATE_STANDARD = "128k"  # Standard audio bitrate
+AUDIO_BITRATE_HIGH = "192k"  # Higher quality audio bitrate
+
+# Channel layouts
+CHANNEL_LAYOUT_MONO = "mono"
+CHANNEL_LAYOUT_STEREO = "stereo"
+
+# Silent audio source generators for FFmpeg
+SILENT_AUDIO_MONO_CAMERA = f"anullsrc=channel_layout={CHANNEL_LAYOUT_MONO}:sample_rate={SAMPLE_RATE_CAMERA}"
+SILENT_AUDIO_STEREO_HIGH = f"anullsrc=channel_layout={CHANNEL_LAYOUT_STEREO}:sample_rate={SAMPLE_RATE_HIGH_QUALITY}"
 
 # Effect configuration for different labels
 EFFECT_CONFIGS = {
@@ -71,16 +90,27 @@ def normalize_path_for_ffmpeg(path):
         return str(abs_path)
 
 
-def load_timeline(timeline_path):
-    """Load timeline from JSON file, trying multiple encodings."""
+def load_yaml(file_path):
+    """Load YAML from file, trying multiple encodings."""
     encodings_to_try = ["utf-8", "utf-8-sig", "utf-16", "utf-16-le", "utf-16-be", "cp1252", "latin1"]
     for encoding in encodings_to_try:
         try:
-            with open(timeline_path, "r", encoding=encoding) as f:
-                return json.load(f)
-        except (UnicodeDecodeError, UnicodeError, json.JSONDecodeError):
+            with open(file_path, "r", encoding=encoding) as f:
+                return yaml.safe_load(f)
+        except (UnicodeDecodeError, UnicodeError, yaml.YAMLError):
             continue
-    raise ValueError(f"Could not decode timeline file {timeline_path}")
+    raise ValueError(f"Could not decode YAML file {file_path}")
+
+
+def save_yaml(data, file_path):
+    """Save data to YAML file with proper formatting."""
+    with open(file_path, "w", encoding="utf-8") as f:
+        yaml.dump(data, f, default_flow_style=False, allow_unicode=True, indent=2, sort_keys=False)
+
+
+def load_timeline(timeline_path):
+    """Load timeline from YAML file, trying multiple encodings."""
+    return load_yaml(timeline_path)
 
 
 def mmss_to_seconds(mmss_str):
@@ -132,8 +162,8 @@ def is_audio_file(file_path):
 
 
 def find_timeline_files(directory):
-    """Find all timeline JSON files in a directory."""
-    return sorted(Path(directory).glob("*_timeline.json"))
+    """Find all timeline YAML files in a directory."""
+    return sorted(Path(directory).glob("*_timeline.yaml"))
 
 
 def find_media_file_for_timeline(timeline_path):

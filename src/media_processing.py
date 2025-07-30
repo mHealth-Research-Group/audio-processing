@@ -3,6 +3,9 @@ from .utils import (
     EFFECT_CONFIGS,
     run_subprocess_with_encoding,
     mmss_to_seconds,
+    AUDIO_CODEC,
+    AUDIO_BITRATE_STANDARD,
+    AUDIO_BITRATE_HIGH,
 )
 
 
@@ -247,7 +250,7 @@ def _process_with_filter_script(input_path, output_path, mute_segments, black_se
             ffmpeg_cmd.extend(["-c:v", "copy"])
 
         if mute_segments:
-            ffmpeg_cmd.extend(["-c:a", "aac", "-b:a", "192k"])
+            ffmpeg_cmd.extend(["-c:a", AUDIO_CODEC, "-b:a", AUDIO_BITRATE_HIGH])
         else:
             ffmpeg_cmd.extend(["-c:a", "copy"])
 
@@ -283,7 +286,7 @@ def _process_with_inline_filters(input_path, output_path, mute_segments, black_s
         ffmpeg_cmd.extend(["-c:v", "copy"])
 
     if audio_filter:
-        ffmpeg_cmd.extend(["-af", audio_filter, "-c:a", "aac", "-b:a", "192k"])
+        ffmpeg_cmd.extend(["-af", audio_filter, "-c:a", AUDIO_CODEC, "-b:a", AUDIO_BITRATE_HIGH])
     else:
         ffmpeg_cmd.extend(["-c:a", "copy"])
 
@@ -388,9 +391,9 @@ def _apply_blank_video_filter_method(input_video, output_path, speech_segments, 
         "-crf",
         "23",
         "-c:a",
-        "aac",
+        AUDIO_CODEC,
         "-b:a",
-        "128k",
+        AUDIO_BITRATE_STANDARD,
         str(output_path),
     ]
 
@@ -512,9 +515,9 @@ def _apply_blank_video_concat_method(input_video, output_path, speech_segments, 
             "-c:v",
             "copy",  # Keep video stream copy for speed
             "-c:a",
-            "aac",  # Re-encode audio for consistency
+            AUDIO_CODEC,  # Re-encode audio for consistency
             "-b:a",
-            "128k",  # Set audio bitrate
+            AUDIO_BITRATE_STANDARD,  # Set audio bitrate
             str(output_path),
         ]
 
@@ -603,9 +606,9 @@ def compress_video(input_path, output_path=None, quality="23", preset="medium", 
     ffmpeg_cmd.extend(
         [
             "-c:a",
-            "aac",  # AAC audio codec
+            AUDIO_CODEC,  # AAC audio codec
             "-b:a",
-            "128k",  # Audio bitrate
+            AUDIO_BITRATE_STANDARD,  # Audio bitrate
             "-movflags",
             "+faststart",  # Optimize for web streaming
             "-pix_fmt",

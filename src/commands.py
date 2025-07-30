@@ -3,7 +3,6 @@ import os
 import sys
 from pathlib import Path
 import subprocess
-import json
 
 from .audio_analysis import (
     detect_voice_segments,
@@ -23,6 +22,7 @@ from .utils import (
     is_video_file,
     load_timeline,
     mmss_to_seconds,
+    save_yaml,
 )
 from .video_merger import merge_videos
 
@@ -92,8 +92,6 @@ def process_single_file(args, gap_info=None):
             if gap_info and timeline_data and gap_info.get("gaps"):
                 from .utils import seconds_to_mmss, mmss_to_seconds
 
-                print(f"DEBUG: Adding {len(gap_info['gaps'])} gaps to timeline")
-
                 for gap in gap_info["gaps"]:
                     start_offset = gap["start_offset"]
                     duration = gap["duration"]
@@ -126,8 +124,7 @@ def process_single_file(args, gap_info=None):
                 timeline_output_path = Path(args.timeline_output)
                 timeline_output_path.parent.mkdir(parents=True, exist_ok=True)
                 try:
-                    with open(timeline_output_path, "w", encoding="utf-8") as f:
-                        json.dump(timeline_data, f, indent=2, ensure_ascii=False)
+                    save_yaml(timeline_data, timeline_output_path)
                     print(f"Timeline saved: {timeline_output_path}")
                 except Exception as e:
                     print(f"Warning: Failed to save timeline to {timeline_output_path}: {e}")
@@ -267,9 +264,9 @@ def process_directory(args):
 
             # Set timeline output path correctly
             if args.timeline_output:
-                file_args.timeline_output = str(timeline_dir / f"{base_output_path.stem}_timeline.json")
+                file_args.timeline_output = str(timeline_dir / f"{base_output_path.stem}_timeline.yaml")
             elif args.generate_timeline:
-                file_args.timeline_output = str(timeline_dir / f"{base_output_path.stem}_timeline.json")
+                file_args.timeline_output = str(timeline_dir / f"{base_output_path.stem}_timeline.yaml")
 
             # Process the merged video (this will mute conversations by default)
             result = process_single_file(file_args, gap_info=gap_info)
@@ -306,9 +303,9 @@ def process_directory(args):
 
         # Set timeline output path correctly
         if args.timeline_output:
-            file_args.timeline_output = str(timeline_dir / f"{base_output_path.stem}_timeline.json")
+            file_args.timeline_output = str(timeline_dir / f"{base_output_path.stem}_timeline.yaml")
         elif args.generate_timeline:
-            file_args.timeline_output = str(output_dir / f"{base_output_path.stem}_timeline.json")
+            file_args.timeline_output = str(output_dir / f"{base_output_path.stem}_timeline.yaml")
 
         process_single_file(file_args)
 
@@ -391,8 +388,7 @@ def apply_blank_command(args):
 
     try:
         # Load timeline data
-        with open(timeline_path, "r", encoding="utf-8") as f:
-            timeline_data = json.load(f)
+        timeline_data = load_timeline(timeline_path)
 
         # Extract segments marked as "all" for blank video replacement
         blank_segments = []
@@ -422,8 +418,7 @@ def apply_blank_command(args):
         # Save updated timeline if segments were modified
         if timeline_modified:
             try:
-                with open(timeline_path, "w", encoding="utf-8") as f:
-                    json.dump(timeline_data, f, indent=2, ensure_ascii=False)
+                save_yaml(timeline_data, timeline_path)
                 print(f"Timeline updated: {timeline_path}")
             except Exception as e:
                 print(f"Warning: Failed to save updated timeline: {e}")

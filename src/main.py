@@ -60,7 +60,7 @@ def add_process_arguments(parser):
     parser.add_argument(
         "--generate-timeline",
         action="store_true",
-        help="Generate a timeline JSON file with detected segments.",
+        help="Generate a timeline YAML file with detected segments.",
     )
     parser.add_argument(
         "--timeline-output",
@@ -124,7 +124,7 @@ def main():
 
         blank_parser = subparsers.add_parser("apply-blank", help="Replace timeline segments with blank video")
         blank_parser.add_argument("input_video", help="Path to input video file")
-        blank_parser.add_argument("timeline", help="Path to timeline JSON file")
+        blank_parser.add_argument("timeline", help="Path to timeline YAML file")
         blank_parser.add_argument(
             "--blank-video", default="blank_muted.MP4", help="Path to blank video file (default: blank_muted.MP4)"
         )

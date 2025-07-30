@@ -11,7 +11,16 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import List, Tuple, Optional, Dict, Any
 
-from .utils import run_subprocess_with_encoding, is_video_file, mmss_to_seconds, seconds_to_mmss
+from .utils import (
+    run_subprocess_with_encoding,
+    is_video_file,
+    mmss_to_seconds,
+    seconds_to_mmss,
+    load_timeline,
+    save_yaml,
+    AUDIO_CODEC,
+    SILENT_AUDIO_MONO_CAMERA,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -62,8 +71,7 @@ def add_video_gaps_to_timeline(
     """
     try:
         # Load existing timeline
-        with open(timeline_path, "r") as f:
-            timeline_data = json.load(f)
+        timeline_data = load_timeline(timeline_path)
 
         if not segments or not gaps:
             return
@@ -105,8 +113,7 @@ def add_video_gaps_to_timeline(
             existing_timeline.insert(insert_index, gap_segment)
 
         # Save updated timeline
-        with open(timeline_path, "w") as f:
-            json.dump(timeline_data, f, indent=2)
+        save_yaml(timeline_data, timeline_path)
         logger.info(f"Added {len(gaps)} NoVideo segments to timeline: {timeline_path}")
 
     except Exception as e:
@@ -133,8 +140,7 @@ def save_gap_info(segments: List[VideoSegment], gaps: List[Tuple[datetime, float
         gap_data["gaps"].append({"start_offset": start_offset, "duration": gap_duration})
 
     try:
-        with open(gap_info_path, "w") as f:
-            json.dump(gap_data, f, indent=2)
+        save_yaml(gap_data, gap_info_path)
         logger.info(f"Gap information saved: {gap_info_path}")
     except Exception as e:
         logger.error(f"Failed to save gap information: {e}")
@@ -153,12 +159,10 @@ def apply_saved_gaps_to_timeline(timeline_path: Path, gap_info_path: Path) -> No
             return
 
         # Load gap information
-        with open(gap_info_path, "r") as f:
-            gap_data = json.load(f)
+        gap_data = load_timeline(gap_info_path)
 
         # Load existing timeline
-        with open(timeline_path, "r") as f:
-            timeline_data = json.load(f)
+        timeline_data = load_timeline(timeline_path)
 
         existing_timeline = timeline_data.get("timeline", [])
 
@@ -190,8 +194,7 @@ def apply_saved_gaps_to_timeline(timeline_path: Path, gap_info_path: Path) -> No
             existing_timeline.insert(insert_index, gap_segment)
 
         # Save updated timeline
-        with open(timeline_path, "w") as f:
-            json.dump(timeline_data, f, indent=2)
+        save_yaml(timeline_data, timeline_path)
         logger.info(f"Added {len(gap_data['gaps'])} NoVideo segments to timeline: {timeline_path}")
 
         # Clean up gap info file
@@ -211,8 +214,7 @@ def add_video_removed_to_timeline(timeline_path: Path, removed_segments: List[Tu
     """
     try:
         # Load existing timeline
-        with open(timeline_path, "r") as f:
-            timeline_data = json.load(f)
+        timeline_data = load_timeline(timeline_path)
 
         existing_timeline = timeline_data.get("timeline", [])
 
@@ -242,8 +244,7 @@ def add_video_removed_to_timeline(timeline_path: Path, removed_segments: List[Tu
             existing_timeline.insert(insert_index, removed_segment)
 
         # Save updated timeline
-        with open(timeline_path, "w") as f:
-            json.dump(timeline_data, f, indent=2)
+        save_yaml(timeline_data, timeline_path)
         logger.info(f"Added {len(removed_segments)} VideoRemoved segments to timeline: {timeline_path}")
 
     except Exception as e:
@@ -375,13 +376,13 @@ def create_gap_video_from_blank(blank_video_path: Path, output_path: Path, durat
             "-f",
             "lavfi",
             "-i",
-            "anullsrc=channel_layout=mono:sample_rate=32000",  # Silent audio matching camera specs
+            SILENT_AUDIO_MONO_CAMERA,  # Silent audio matching camera specs
             "-t",
             str(duration),
             "-c:v",
             "copy",  # Video stream copy for speed
             "-c:a",
-            "aac",  # Add silent audio track
+            AUDIO_CODEC,  # Add silent audio track
             "-shortest",  # Match shortest stream duration
             str(output_path),
         ]
@@ -407,13 +408,13 @@ def create_gap_video_from_blank(blank_video_path: Path, output_path: Path, durat
                 "-f",
                 "lavfi",
                 "-i",
-                "anullsrc=channel_layout=mono:sample_rate=32000",  # Silent audio matching camera specs
+                SILENT_AUDIO_MONO_CAMERA,  # Silent audio matching camera specs
                 "-t",
                 str(duration),
                 "-c:v",
                 "copy",  # Video stream copy for speed
                 "-c:a",
-                "aac",  # Add silent audio track
+                AUDIO_CODEC,  # Add silent audio track
                 "-shortest",  # Match shortest stream duration
                 str(output_path),
             ]

@@ -390,7 +390,7 @@ def generate_speaker_timeline(audio_path, model, min_duration_on=0.1, min_durati
 def _handle_speaker_and_timeline_analysis(args, input_path, model):
     """Helper function to handle speaker analysis and timeline generation."""
     if args.analyze_speakers or args.speaker_analysis_only:
-        print(f"\\nAnalyzing speakers in: {input_path}")
+        print(f"\nAnalyzing speakers in: {input_path}")
         if args.detailed_analysis:
             speaker_analysis = analyze_speaker_segments_direct(input_path, model)
             print("Detailed Speaker Analysis Results:")
