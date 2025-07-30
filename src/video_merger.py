@@ -451,7 +451,6 @@ def merge_videos(
         min_gap_threshold: Minimum gap duration to fill (default 2.0s)
         max_gap_threshold: Maximum gap duration to fill (None = no limit)
         merge_list_path: Optional custom path for saving the merge list file
-        timeline_path: Optional path for saving timeline with gap information
     """
     segments = analyze_video_directory(input_dir)
     if not segments:

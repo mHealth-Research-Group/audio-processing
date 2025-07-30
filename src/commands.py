@@ -432,7 +432,51 @@ def apply_blank_command(args):
 
 
 def compress_command(args):
-    """Compress video files to H.264 with smaller file sizes."""
+    """
+    Compress video files to H.264 with smaller file sizes using GPU acceleration when available.
+    
+    This command can process either a single video file or all video files in a directory.
+    It uses FFmpeg with hardware acceleration (NVENC) when available, falling back to 
+    software encoding (libx264) otherwise.
+    
+    Args:
+        args: Namespace object containing the following attributes:
+            - input_path (str): Path to input video file or directory
+            - output (str, optional): Path for output file or directory. If not provided:
+                - For single files: adds "_compressed" suffix to filename
+                - For directories: creates "compressed" subdirectory
+            - quality (int): CRF/CQ value for compression quality (default: 23)
+                - Lower values = better quality, larger file size
+                - Range: 0-51 for CRF, 0-51 for NVENC CQ
+            - preset (str): Encoding speed preset (default: "fast")
+                - Options: "ultrafast", "fast", "medium", "slow", "veryslow"
+            - max_width (int): Maximum width for output video (default: 1280)
+                - Set to 0 to disable scaling
+                - Maintains aspect ratio when scaling
+    
+    Returns:
+        int: Exit code (0 for success, 1 for error)
+            - Single file: 0 if compression succeeds, 1 if it fails
+            - Directory: 0 if at least one file succeeds, 1 if all fail
+    
+    Examples:
+        Single file compression:
+            args.input_path = "video.mp4"
+            args.output = "compressed_video.mp4"
+            args.quality = 23
+            
+        Directory compression:
+            args.input_path = "/videos/"
+            args.output = "/output/"  # Optional
+            args.quality = 20  # Higher quality
+            args.preset = "slow"  # Better compression
+    
+    Note:
+        - Uses H.264 video codec with AAC audio for broad compatibility
+        - Automatically detects and uses NVIDIA GPU acceleration when available
+        - Provides compression statistics (file size reduction percentage)
+        - Skips non-video files when processing directories
+    """
     from pathlib import Path
     from .media_processing import compress_video
     from .utils import is_video_file, find_media_files
