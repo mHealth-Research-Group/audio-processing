@@ -1,256 +1,173 @@
-# Audio Processing Pipeline
+# Audio/Video Processing Tool
 
-This project provides a multi-step pipeline for processing video and audio files. It is designed to merge multiple video files, detect and label gaps, analyze audio for speaker segments, and allow for manual adjustments to the timeline.
+An AI-driven tool for processing audio and video files with automatic speaker detection, video merging, and intelligent gap filling. It is ideal for processing security footage, meeting recordings, and other timestamped video sequences.
 
-## Performance Optimizations
+## Quick Start
 
-### Video Merging Performance Issues & Solutions
+### Complete Processing
 
-If you're experiencing slow video merging, here are the main bottlenecks and their solutions:
+For most use cases, the `--complete` flag provides a comprehensive processing pipeline that merges timestamped videos, fills gaps, analyzes speakers, and generates a timeline.
 
-#### 🐌 **Problem 1: Unnecessary Re-encoding** (Major Performance Impact)
-**Issue**: The original implementation forced FFmpeg to re-encode all videos during concatenation, even when videos had compatible formats.
+```bash
+# Process a directory of timestamped videos with the complete pipeline
+uv run main.py process /path/to/videos --complete --output final_video.mp4
+```
 
-**Solution**: Implemented intelligent format detection and stream copying:
-- ✅ **Stream Copy Mode**: When all videos have compatible formats (same resolution, codec, frame rate), the pipeline now uses `-c copy` for instant concatenation
-- ⚠️ **Re-encoding Mode**: Only re-encodes when videos have incompatible formats, with optimized settings
+This command performs the following actions:
+1. **Merges** all timestamped videos in chronological order.
+2. **Fills gaps** between videos with a blank video (using the default `blank_muted.MP4`).
+3. **Analyzes speakers** to detect conversations.
+4. **Generates a timeline** (`.yaml`) with detected speech segments.
+5. **Creates a processed video** with conversations muted.
 
-**Performance Gain**: 10-50x faster for compatible videos (seconds instead of minutes/hours)
-
-#### 🐌 **Problem 2: Slow Black Video Generation** 
-**Issue**: Creating gap-filling black videos used slow encoding settings.
-
-**Solutions**:
-- Changed preset from `"fast"` to `"ultrafast"` 
-- Reduced quality from CRF 23 to CRF 28 (sufficient for black video)
-- Added aggressive x264 optimization parameters
-- Added `fastdecode` tuning for quicker processing
-
-**Performance Gain**: 3-5x faster black video creation
-
-#### 🐌 **Problem 3: Sequential Video Metadata Processing**
-**Issue**: Video metadata extraction processed files one-by-one.
-
-**Solution**: Implemented parallel processing:
-- Uses ThreadPoolExecutor for concurrent metadata extraction
-- Automatically scales to available CPU cores
-- Supports all major video formats (MP4, AVI, MOV, MKV)
-
-**Performance Gain**: 2-4x faster metadata analysis
-
-#### 🐌 **Problem 4: Suboptimal FFmpeg Settings**
-**Issue**: Missing performance optimizations in video processing.
-
-**Solutions**:
-- Added `-threads 0` to use all CPU cores
-- Added x264 threading optimizations
-- Added `+faststart` for better file handling
-- Optimized preset selection (changed from "medium" to "fast")
-
-**Performance Gain**: 20-40% faster processing
-
-### Expected Performance After Optimizations
-
-| Video Count | Before Optimization | After Optimization | Improvement |
-|-------------|-------------------|-------------------|-------------|
-| 10 videos (same format) | 15-30 minutes | 30-60 seconds | 15-30x faster |
-| 10 videos (mixed formats) | 20-40 minutes | 5-10 minutes | 2-4x faster |
-| 50 videos (same format) | 1-3 hours | 2-5 minutes | 20-40x faster |
-
-### Performance Tips
-
-1. **Use consistent video formats** for maximum speed benefit
-2. **Ensure adequate storage space** on the working directory drive  
-3. **Use SSD storage** when possible for I/O intensive operations
-4. **Close other resource-intensive applications** during processing
-5. **Use the pipeline's parallel processing** - it automatically optimizes based on your hardware
-
-## Features
-
-- **Video Merging**: Merges multiple video files in a directory into a single video.
-- **Gap Detection**: Detects gaps between video files and fills them with black video.
-- **Audio Analysis**: Uses `pyannote.audio` to perform voice activity detection and speaker diarization.
-- **Manual Adjustments**: Allows for manual adjustments to the audio and video timeline.
-- **Video Compression**: Compress videos to 720p or 480p resolution for faster processing and smaller file sizes.
-- **Comprehensive Labeling**: Generates a comprehensive label file that can be used with annotation tools like Signaligner.
+**Note**: Video merging is automatic for directories containing timestamped videos. The tool uses `blank_muted.MP4` as the default blank video file for gap filling.
 
 ## Installation
 
-1.  **Clone the repository:**
+### Prerequisites
 
-    ```bash
-    git clone git@github.com:mHealth-Research-Group/audio-processing.git
-    cd audio-processing
-    ```
+- **FFmpeg**: Required for all media processing tasks.
+- **Hugging Face Account**: An access token is needed to download the speaker detection model.
 
-2.  **Install dependencies:**
+### GPU and CUDA
 
-    This project uses `uv` for dependency management. To install the required packages, run:
+For GPU acceleration, you need a compatible NVIDIA GPU with the appropriate CUDA Toolkit installed. It is critical that your PyTorch version matches your CUDA version.
 
-    ```bash
-    uv sync
-    ```
+- **Check your CUDA version**:
+  ```bash
+  nvcc --version
+  ```
+- **Install the correct PyTorch version**:
+  Visit the [PyTorch website](https://pytorch.org/get-started/locally/) to find the correct installation command for your specific CUDA version. For example, for CUDA 12.8, the command is:
+  ```bash
+  uv add torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
+  ```
 
-3.  **Set up environment variables:**
+### Setup
 
-    This project requires a Hugging Face access token to download the `pyannote/segmentation-3.0` model. Create a `.env` file in the root of the project and add your token:
+1. **Clone the repository and install dependencies:**
+   ```bash
+   git clone <repository-url>
+   cd audio-processing
+   uv sync
+   ```
 
-    ```
-    HUGGINGFACE_ACCESS_TOKEN="your-hugging-face-token"
-    ```
+2. **Configure your Hugging Face token:**
+   Create a `.env` file in the project root and add your token:
+   ```
+   HUGGINGFACE_ACCESS_TOKEN=your_token_here
+   ```
 
-## Usage
+## Usage Guide
 
-The pipeline is designed to minimize user effort. Simply provide a folder of videos, the pipeline processes everything automatically, then you make manual adjustments and apply the final processing.
+### Processing a Directory
 
-### Streamlined Workflow: Processing a Directory of Videos
-
-This example shows the recommended workflow for processing a directory of videos with minimal effort.
-
-**Step 1: Process Videos (Automated - Steps 1-3)**
-
-This single command merges all videos, analyzes audio, and prepares the adjustment file:
-
-```bash
-uv run python main.py pipeline full test_videos -w pipeline_test
-```
-
-This command will:
-- Merge all video files in the `test_videos` directory into `merged_video.mp4`
-- Detect gaps between videos and create metadata
-- Extract and analyze audio for voice activity and speaker detection
-- Create a `merged_video_timeline_manual_adjustments.json` file for manual review
-
-**Step 2: Manual Review (Human Input Required)**
-
-Open the generated adjustment file and review/modify the timeline:
+The `process` command is the main entry point for all processing tasks. It can handle both single files and directories.
 
 ```bash
-# Edit this file to make your adjustments:
-# pipeline_test/merged_video_timeline_manual_adjustments.json
+# Basic processing of a directory (automatically merges timestamped videos)
+uv run main.py process /path/to/videos --output-dir /path/to/output
+
+# Merge-only: merge videos without speech analysis
+uv run main.py process /path/to/videos --merge-only --output merged_video.mp4
+
+# Full analysis with timeline generation
+uv run main.py process /path/to/videos --generate-timeline --analyze-speakers
 ```
 
-- Review the timeline segments and their labels
-- Change labels to control effects:
-  - `"speaking"` or `"conversation"`: Mute audio only
-  - `"black"`: Black out video but preserve audio  
-  - `"all"`: Mute audio AND black out video
-  - `"silence"`: No effects applied
-- Add custom time ranges if needed
-- **Important**: Change `"manual_review_completed": false` to `true` when done
+### Single File Processing
 
-**Step 3: Apply Final Adjustments**
-
-Apply your manual adjustments to create the final processed video:
+The tool can also process individual audio or video files.
 
 ```bash
-uv run python main.py pipeline step4 -w pipeline_test
+# Process a single file and generate a timeline
+uv run main.py process recording.mp4 --generate-timeline
+
+# Analyze speakers in a file without generating output
+uv run main.py process meeting.mp4 --analyze-speakers --speaker-analysis-only
+
+# Use advanced speaker analysis for higher accuracy
+uv run main.py process noisy_audio.mp4 --detailed-analysis --generate-timeline
 ```
 
-This creates:
-- `pipeline_test/merged_video_final.mp4`: The final processed video
-- `pipeline_test/merged_video_final_comprehensive_labels.csv`: Labels for annotation tools
+### Applying Edits from a Timeline
 
-### Check Pipeline Status
+You can manually edit a generated timeline file and then apply those changes to the video.
 
-To check the current status of your pipeline at any time:
+**1. Generate a timeline:**
+```bash
+uv run main.py process video.mp4 --generate-timeline
+```
+
+**2. Edit the timeline:**
+Open the generated `_timeline.yaml` file and modify the `"type"` of any segment you want to change. For example, to replace a segment with a blank video, change its `"type"` to `"all"`.
+
+**3. Apply the changes:**
+Use the `apply-blank` command to replace the marked segments with a blank video.
+```bash
+uv run main.py apply-blank video.mp4 video_timeline.yaml -o final_video.mp4
+```
+
+The command uses `blank_muted.MP4` as the default blank video file. You can specify a different blank video with `--blank-video path/to/blank.mp4`.
+
+**Note:** After processing, segments that were marked as `"type": "all"` will automatically have their `"label"` updated to `"removed"` in the timeline file, making it easy to track which segments have been processed.
+
+## File Naming Convention
+
+For automatic video merging, your files must be named using a timestamp format:
+
+**Format:** `YYYYMMDDHHMMSS_*.ext`
+
+**Examples:**
+- `20231026183000_camera1.mp4`
+- `20231026183500_camera1.mp4`
+
+The tool will detect the 5-minute gap between these files and fill it with a blank video.
+
+## Command Reference
+
+### Main Commands
+
+- `process`: The main command for processing files and directories.
+- `apply-edits`: Applies edits from a timeline file to a media file.
+- `apply-blank`: Replaces segments in a video with a blank video based on a timeline (uses blank_muted.MP4 by default).
+- `compress`: Compresses video files to H.264 with smaller file sizes.
+
+### Processing Flags
+
+- `--complete`: Enables a full processing pipeline, including merging, timeline generation, and speaker analysis.
+- `--merge-videos`: Merges timestamped videos in a directory.
+- `--merge-only`: Merges videos without performing speech analysis.
+- `--generate-timeline`: Creates a YAML timeline file with speech segments.
+- `--analyze-speakers`: Enables speaker detection.
+- `--detailed-analysis`: Uses a more accurate (but slower) speaker analysis model.
+- `--speaker-analysis-only`: Performs speaker analysis without creating an output file.
+
+### Video Merging Options
+
+- `--force-overwrite` or `-f`: Overwrites existing merged videos without prompting.
+- `--min-gap-threshold`: The minimum gap duration (in seconds) to fill with a blank video. Default is `2`.
+- `--max-gap-threshold`: The maximum gap duration (in seconds) to fill.
+- `--blank-video`: The path to the blank video file to use for filling gaps (default: blank_muted.MP4).
+
+### Compression Command
+
+The `compress` command converts videos to H.264 with optimized settings for smaller file sizes:
 
 ```bash
-uv run python main.py pipeline status -w pipeline_test
+# Compress a single video file
+uv run main.py compress input_video.mp4 -o compressed_video.mp4
+
+# Compress all videos in a directory
+uv run main.py compress /path/to/videos --output /path/to/compressed
+
+# Adjust compression settings
+uv run main.py compress video.mp4 --quality 20 --preset slow --max-width 1280
 ```
 
-## Pipeline Steps in Detail
+**Compression Options:**
+- `--quality`: Video quality (CRF value, 18-28 typical range). Lower = better quality, higher file size (default: 23)
+- `--preset`: Encoding speed preset - `ultrafast`, `fast`, `medium`, `slow`, `veryslow` (default: fast)
+- `--max-width`: Maximum width for output video. Set to 0 to disable scaling (default: 1280)
 
-### `full` (Recommended)
-
-Runs the complete automated pipeline through step 3. This is the recommended approach for most users.
-
-- First argument: Path to the directory containing the video files
-- `-w, --working-dir`: Working directory for pipeline files (default: `./pipeline_work`)
-- `-o, --output`: Output path for merged video (optional)
-- `--min-duration-on`: Minimum duration for speech regions (in seconds, default: 0.1)
-- `--min-duration-off`: Minimum duration for non-speech regions (in seconds, default: 0.1)
-
-### `step4`
-
-Applies manual adjustments to create the final video. This is the second command you run after manual review.
-
-- `-w, --working-dir`: Working directory for pipeline files
-- `--output-suffix`: Suffix for final output files (default: `_final`)
-
-### `status`
-
-Shows the current pipeline status and file locations.
-
-- `-w, --working-dir`: Working directory for pipeline files
-
-### Individual Steps (Advanced)
-
-For advanced users who need granular control:
-
-#### `step1`
-
-Merges video files in a directory with gap detection.
-
-- First argument: Path to the directory containing the video files
-- `-w, --working-dir`: Working directory for pipeline files (default: `./pipeline_work`)
-- `-o, --output`: Output path for merged video (optional)
-
-#### `step2`
-
-Processes the audio in the merged video file.
-
-- `-w, --working-dir`: Working directory for pipeline files
-- `--min-duration-on`: Minimum duration for speech regions (in seconds, default: 0.1)
-- `--min-duration-off`: Minimum duration for non-speech regions (in seconds, default: 0.1)
-
-## Video Compression
-
-The system supports video compression to reduce file sizes and speed up processing. Compression can be applied to any video processing command:
-
-### Available Resolutions
-
-- `--compress 720p`: Compress video to 720p (1280x720) while maintaining aspect ratio
-- `--compress 480p`: Compress video to 480p (854x480) while maintaining aspect ratio
-
-### Usage Examples
-
-```bash
-# Process video with compression
-uv run python main.py process video.mp4 --compress 720p
-
-# Apply effects with compression  
-uv run python main.py apply-effects video.mp4 1:30-2:45 --effect mute --compress 480p
-
-# Compression-only mode (no voice processing)
-uv run python main.py process video.mp4 --speaker-analysis-only --compress 720p
-```
-
-**Note**: Compression is only available for video files. Audio files will ignore the compression option.
-
-#### `step3`
-
-Prepares a file for manual adjustments.
-
-- `-w, --working-dir`: Working directory for pipeline files
-
-## Label File Format
-
-The pipeline generates a comprehensive label file in CSV format with the following columns:
-
-- `START_TIME`: Start timestamp in "YYYY-MM-DD HH:MM:SS.sss" format
-- `STOP_TIME`: Stop timestamp in "YYYY-MM-DD HH:MM:SS.sss" format  
-- `PREDICTION`: Label type (e.g., "Speaking", "Conversation", "Silence", "Missing_Video")
-- `SOURCE`: Always "Player"
-- `LABELSET`: Always "DEFAULT"
-
-Example CSV content:
-
-```csv
-START_TIME,STOP_TIME,PREDICTION,SOURCE,LABELSET
-2019-06-19 16:10:06.400,2019-06-19 23:49:53.600,Silence,Player,DEFAULT
-2019-06-19 23:49:53.600,2019-06-20 06:36:43.200,Speaking,Player,DEFAULT
-2019-06-20 06:36:43.200,2019-06-21 00:32:40.000,Conversation,Player,DEFAULT
-```
-
-This CSV file can be used with annotation tools like [Signaligner](https://https://signaligner.org/) to visualize and edit the timeline.
+The compression uses H.264 video codec with AAC audio, optimized for web streaming and broad compatibility.

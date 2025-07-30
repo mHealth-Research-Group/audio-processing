@@ -153,6 +153,7 @@ dependencies = [
     { name = "pyannote-audio" },
     { name = "pytest" },
     { name = "python-dotenv" },
+    { name = "pyyaml" },
     { name = "torchaudio" },
     { name = "transformers" },
 ]
@@ -168,6 +169,7 @@ requires-dist = [
     { name = "pyannote-audio", specifier = ">=3.3.2" },
     { name = "pytest", specifier = ">=8.4.1" },
     { name = "python-dotenv", specifier = ">=1.1.1" },
+    { name = "pyyaml", specifier = ">=6.0.2" },
     { name = "torchaudio", specifier = ">=2.7.1" },
     { name = "transformers", specifier = ">=4.53.0" },
 ]
