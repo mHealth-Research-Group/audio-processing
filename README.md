@@ -1,7 +1,5 @@
 # Audio/Video Processing Tool
 
-An AI-driven tool for processing audio and video files with automatic speaker detection, video merging, and intelligent gap filling. It is ideal for processing security footage, meeting recordings, and other timestamped video sequences.
-
 ## Quick Start
 
 ### Complete Processing
@@ -109,6 +107,8 @@ uv run main.py apply-blank video.mp4 video_timeline.yaml -o final_video.mp4
 ```
 
 The command uses `blank_muted.MP4` as the default blank video file. You can specify a different blank video with `--blank-video path/to/blank.mp4`.
+
+**Privacy Trimming:** By default, the system preserves the first frame (~33ms) during processing to maintain proper video encoding, then automatically trims it from the final output for privacy preservation. To disable this behavior, use `--no-trim-first-frame`.
 
 **Note:** After processing, segments that were marked as `"type": "all"` will automatically have their `"label"` updated to `"removed"` in the timeline file, making it easy to track which segments have been processed.
 

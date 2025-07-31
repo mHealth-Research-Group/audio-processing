@@ -129,6 +129,11 @@ def main():
             "--blank-video", default="blank_muted.MP4", help="Path to blank video file (default: blank_muted.MP4)"
         )
         blank_parser.add_argument("-o", "--output", help="Path for output file")
+        blank_parser.add_argument(
+            "--no-trim-first-frame",
+            action="store_true",
+            help="Disable trimming of first frame for privacy preservation (default: trimming enabled)",
+        )
 
         compress_parser = subparsers.add_parser(
             "compress", help="Compress video files to H.264 with smaller file sizes"

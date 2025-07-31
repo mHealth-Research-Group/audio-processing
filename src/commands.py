@@ -413,7 +413,12 @@ def apply_blank_command(args):
         # Apply blank video to marked segments
         from .media_processing import apply_blank_video_to_segments
 
-        apply_blank_video_to_segments(input_video, output_path, blank_segments, blank_video_path, timeline_path)
+        # Determine whether to trim first frame (default: True, disabled with --no-trim-first-frame)
+        trim_first_frame = not getattr(args, "no_trim_first_frame", False)
+
+        apply_blank_video_to_segments(
+            input_video, output_path, blank_segments, blank_video_path, timeline_path, trim_first_frame
+        )
 
         # Save updated timeline if segments were modified
         if timeline_modified:
@@ -434,11 +439,11 @@ def apply_blank_command(args):
 def compress_command(args):
     """
     Compress video files to H.264 with smaller file sizes using GPU acceleration when available.
-    
+
     This command can process either a single video file or all video files in a directory.
-    It uses FFmpeg with hardware acceleration (NVENC) when available, falling back to 
+    It uses FFmpeg with hardware acceleration (NVENC) when available, falling back to
     software encoding (libx264) otherwise.
-    
+
     Args:
         args: Namespace object containing the following attributes:
             - input_path (str): Path to input video file or directory
@@ -453,24 +458,24 @@ def compress_command(args):
             - max_width (int): Maximum width for output video (default: 1280)
                 - Set to 0 to disable scaling
                 - Maintains aspect ratio when scaling
-    
+
     Returns:
         int: Exit code (0 for success, 1 for error)
             - Single file: 0 if compression succeeds, 1 if it fails
             - Directory: 0 if at least one file succeeds, 1 if all fail
-    
+
     Examples:
         Single file compression:
             args.input_path = "video.mp4"
             args.output = "compressed_video.mp4"
             args.quality = 23
-            
+
         Directory compression:
             args.input_path = "/videos/"
             args.output = "/output/"  # Optional
             args.quality = 20  # Higher quality
             args.preset = "slow"  # Better compression
-    
+
     Note:
         - Uses H.264 video codec with AAC audio for broad compatibility
         - Automatically detects and uses NVIDIA GPU acceleration when available

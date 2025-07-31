@@ -7,7 +7,11 @@ from pyannote.audio.pipelines import (
     VoiceActivityDetection,
 )
 from pyannote.audio.utils.powerset import Powerset
-from .utils import mmss_to_seconds
+
+try:
+    from .utils import mmss_to_seconds, seconds_to_mmss
+except ImportError:
+    from utils import mmss_to_seconds, seconds_to_mmss
 
 # Suppress pyannote TensorFloat-32 (TF32) reproducibility warning
 warnings.filterwarnings("ignore", category=UserWarning, module="pyannote.audio.utils.reproducibility")
@@ -415,3 +419,75 @@ def _handle_speaker_and_timeline_analysis(args, input_path, model):
                 if s["type"] == "speech"
             ]
     return voice_segments, timeline_data
+
+
+# Enhanced segment factory and utilities
+
+
+def generate_segment_label(segment_type, segment_context):
+    """Generate appropriate label based on segment type and context."""
+    if segment_type == "Gap":
+        return "Gap"
+    elif segment_type == "Removed":
+        return ""  # Manual population required
+    elif segment_type == "Audio":
+        if segment_context.get("is_silence"):
+            return "silence"
+        elif segment_context.get("speaker_count", 1) > 1:
+            return f"conversation {segment_context['speaker_count']}"
+        else:
+            return f"speaking {segment_context.get('speaker_count', 1)}"
+    elif segment_type == "Video N/A":
+        # Include audio content description based on detected audio
+        if segment_context.get("is_silence"):
+            return "silence (video covered)"
+        elif segment_context.get("speaker_count", 1) > 1:
+            return f"conversation {segment_context['speaker_count']} (video covered)"
+        else:
+            return f"speaking {segment_context.get('speaker_count', 1)} (video covered)"
+    else:
+        return ""  # Default empty for unknown types
+
+
+def classify_segment_type(creation_context):
+    """Classify segment type based on creation context."""
+    context_type = creation_context.get("context_type", "audio")
+
+    if context_type == "gap":
+        return "Gap"
+    elif context_type == "removed":
+        return "Removed"
+    elif context_type == "video_na":
+        return "Video N/A"
+    else:
+        return "Audio"  # Default for audio analysis segments
+
+
+def create_enhanced_segment(start_time, end_time, segment_context):
+    """Create a segment with the new enhanced format.
+
+    Args:
+        start_time: Start time in seconds
+        end_time: End time in seconds
+        segment_context: Dictionary containing:
+            - context_type: "audio", "gap", "removed", or "video_na"
+            - is_silence: Boolean indicating if segment is silence
+            - speaker_count: Number of speakers detected
+            - annotator: Who created the segment (defaults to "Model")
+
+    Returns:
+        Dictionary with enhanced segment format
+    """
+    segment_type = classify_segment_type(segment_context)
+
+    return {
+        "Start": seconds_to_mmss(start_time),
+        "Real start": "",  # Empty for manual population
+        "End": seconds_to_mmss(end_time),
+        "Real end": "",  # Empty for manual population
+        "Type": segment_type,
+        "Label": generate_segment_label(segment_type, segment_context),
+        "Note": "",  # Empty for manual annotation
+        "Confidence": "",  # Empty for manual population
+        "Annotator": segment_context.get("annotator", "Model"),
+    }
