@@ -325,7 +325,9 @@ def extract_segments_by_effects(timeline_data, target_effects=None):
     return segments
 
 
-def apply_blank_video_to_segments(input_video, output_path, speech_segments, blank_video_path, timeline_path=None):
+def apply_blank_video_to_segments(
+    input_video, output_path, speech_segments, blank_video_path, timeline_path=None, trim_first_frame=True
+):
     """
     Replace speech segments in video with blank video using filter approach for efficiency.
     When there are many segments, this avoids the "Argument list too long" error by using
@@ -337,18 +339,38 @@ def apply_blank_video_to_segments(input_video, output_path, speech_segments, bla
         speech_segments: List of (start_time, end_time) tuples for speech segments
         blank_video_path: Path to blank video file
         timeline_path: Optional path to existing timeline JSON to update with VideoRemoved segments
+        trim_first_frame: Whether to trim the first frame for privacy preservation (default: True)
     """
+    from pathlib import Path
+
     print(f"Applying blank video to {len(speech_segments)} speech segments...")
 
     # Sort speech segments by start time
     speech_segments = sorted(speech_segments, key=lambda x: x[0])
 
+    # For trimming, we need an intermediate output path
+    if trim_first_frame:
+        temp_output = Path(output_path).parent / f"temp_{Path(output_path).name}"
+    else:
+        temp_output = output_path
+
     if len(speech_segments) > 50:
         # For large numbers of segments, use the optimized filter-based approach
-        _apply_blank_video_filter_method(input_video, output_path, speech_segments, blank_video_path, timeline_path)
+        _apply_blank_video_filter_method(input_video, temp_output, speech_segments, blank_video_path, timeline_path)
     else:
         # For smaller numbers, use the original concat method
-        _apply_blank_video_concat_method(input_video, output_path, speech_segments, blank_video_path, timeline_path)
+        _apply_blank_video_concat_method(input_video, temp_output, speech_segments, blank_video_path, timeline_path)
+
+    # Trim the first frame for privacy preservation if requested
+    if trim_first_frame:
+        print("Applying privacy trimming to remove first frame...")
+        trim_first_frame(temp_output, output_path, first_frame_duration=0.033)
+
+        # Clean up temporary file
+        try:
+            temp_output.unlink()
+        except Exception as e:
+            print(f"Warning: Could not remove temporary file {temp_output}: {e}")
 
 
 def _apply_blank_video_filter_method(input_video, output_path, speech_segments, blank_video_path, timeline_path=None):
@@ -534,6 +556,47 @@ def _apply_blank_video_concat_method(input_video, output_path, speech_segments, 
         # Clean up temporary directory
         if temp_dir.exists():
             shutil.rmtree(temp_dir)
+
+
+def trim_first_frame(input_video, output_path, first_frame_duration=0.033):
+    """
+    Trim the first frame from a video for privacy preservation.
+
+    This function removes the first frame that was preserved during processing
+    to maintain encoding compatibility. The duration removed should match the
+    min_video_start value used during processing (typically 33ms).
+
+    Args:
+        input_video: Path to input video file
+        output_path: Path for trimmed output video
+        first_frame_duration: Duration to trim from start (in seconds)
+    """
+    from pathlib import Path
+
+    input_video = Path(input_video)
+    output_path = Path(output_path)
+
+    print(f"Trimming first {first_frame_duration:.3f}s from video for privacy preservation...")
+
+    # Ensure output directory exists
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Build ffmpeg command to trim the first frame
+    trim_cmd = [
+        "ffmpeg",
+        "-y",
+        "-i",
+        str(input_video),
+        "-ss",
+        str(first_frame_duration),  # Skip the first frame duration
+        "-c",
+        "copy",  # Use stream copy for speed - no re-encoding needed
+        str(output_path),
+    ]
+
+    print("Removing first frame for privacy...")
+    run_subprocess_with_encoding(trim_cmd, check=True)
+    print(f"Privacy trimming complete: {output_path}")
 
 
 def compress_video(input_path, output_path=None, quality="23", preset="medium", max_width=1920):
