@@ -8,10 +8,6 @@ from pyannote.audio.pipelines import (
 )
 from pyannote.audio.utils.powerset import Powerset
 
-try:
-    from .utils import mmss_to_seconds, seconds_to_mmss
-except ImportError:
-    from utils import mmss_to_seconds, seconds_to_mmss
 
 # Suppress pyannote TensorFloat-32 (TF32) reproducibility warning
 warnings.filterwarnings("ignore", category=UserWarning, module="pyannote.audio.utils.reproducibility")
