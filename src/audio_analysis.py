@@ -7,6 +7,7 @@ from pyannote.audio.pipelines import (
     VoiceActivityDetection,
 )
 from pyannote.audio.utils.powerset import Powerset
+from .utils import mmss_to_seconds
 
 
 # Suppress pyannote TensorFloat-32 (TF32) reproducibility warning
