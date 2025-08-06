@@ -53,6 +53,7 @@ def process_single_file(args, gap_info=None):
 
         # Check if we need audio analysis (not for merge-only operations)
         needs_audio_analysis = not getattr(args, "merge_only", False)
+        processing_completed = False
 
         try:
             if is_video and needs_audio_analysis:
@@ -141,10 +142,15 @@ def process_single_file(args, gap_info=None):
                     }
                     process_media_with_effects(input_path, output_path, effect_segments)
                     print(f"Processing complete: {output_path}")
+                    processing_completed = True
 
         finally:
-            if temp_audio_path and os.path.exists(temp_audio_path):
+            # Only clean up temp audio file if processing completed successfully
+            # This preserves the WAV file if processing fails, avoiding re-extraction
+            if temp_audio_path and os.path.exists(temp_audio_path) and processing_completed:
                 os.remove(temp_audio_path)
+            elif temp_audio_path and os.path.exists(temp_audio_path):
+                print(f"Preserving extracted audio file for reuse: {temp_audio_path}")
             # Clean up local temp directory if it exists and is empty
             if local_temp_dir and local_temp_dir.exists():
                 try:
