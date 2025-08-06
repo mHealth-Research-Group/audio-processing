@@ -163,8 +163,8 @@ def process_media_with_effects(input_path, output_path, effect_segments):
 
 def _process_with_filter_script(input_path, output_path, mute_segments, black_segments):
     """Process media using FFmpeg filter script file to avoid command line length limits."""
-    import tempfile
     import os
+    from pathlib import Path
 
     print(
         f"Using filter script approach for {len(mute_segments)} mute segments and {len(black_segments)} black segments..."
@@ -173,10 +173,15 @@ def _process_with_filter_script(input_path, output_path, mute_segments, black_se
     # Get optimal encoder settings
     encoder_settings = get_optimal_encoder_settings()
 
-    # Create temporary filter script file
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as filter_file:
-        filter_script_path = filter_file.name
+    # Create local temp directory like the rest of the codebase does
+    input_path = Path(input_path)
+    local_temp_dir = input_path.parent / "tmp"
+    local_temp_dir.mkdir(exist_ok=True)
+    
+    # Create temporary filter script file in local tmp directory
+    filter_script_path = local_temp_dir / f"{input_path.stem}_filter_script.txt"
 
+    try:
         # Write filter graph to file
         filter_lines = []
 
@@ -222,14 +227,14 @@ def _process_with_filter_script(input_path, output_path, mute_segments, black_se
             audio_label = "[a_filtered]"
 
         # Write all filter lines to file
-        filter_file.write(";\n".join(filter_lines))
+        with open(filter_script_path, 'w') as filter_file:
+            filter_file.write(";\n".join(filter_lines))
 
-    try:
         # Build FFmpeg command using filter script
         ffmpeg_cmd = ["ffmpeg", "-i", str(input_path)]
 
-        # Use filter_complex_script to read filters from file
-        ffmpeg_cmd.extend(["-filter_complex_script", filter_script_path])
+        # Use the newer filter_complex syntax to avoid deprecated warning
+        ffmpeg_cmd.extend(["-/filter_complex", str(filter_script_path)])
 
         # Map outputs
         if black_segments:
@@ -263,8 +268,14 @@ def _process_with_filter_script(input_path, output_path, mute_segments, black_se
 
     finally:
         # Clean up temporary filter script file
-        if os.path.exists(filter_script_path):
-            os.unlink(filter_script_path)
+        if filter_script_path.exists():
+            filter_script_path.unlink()
+        # Clean up local temp directory if it exists and is empty
+        if local_temp_dir.exists():
+            try:
+                local_temp_dir.rmdir()  # Only removes if empty
+            except OSError:
+                pass  # Directory not empty or other files exist
 
 
 def _process_with_inline_filters(input_path, output_path, mute_segments, black_segments):

@@ -120,9 +120,15 @@ def process_single_file(args, gap_info=None):
 
                     timeline_list.insert(insert_index, gap_segment)
 
-            # Save timeline data if generated and timeline_output is specified
-            if timeline_data and hasattr(args, "timeline_output") and args.timeline_output:
-                timeline_output_path = Path(args.timeline_output)
+            # Save timeline data if generated
+            if timeline_data and args.generate_timeline:
+                if hasattr(args, "timeline_output") and args.timeline_output:
+                    timeline_output_path = Path(args.timeline_output)
+                else:
+                    # Auto-generate timeline path if not specified
+                    base_path = Path(args.output) if args.output else input_path
+                    timeline_output_path = base_path.parent / f"{base_path.stem}_timeline.yaml"
+                
                 timeline_output_path.parent.mkdir(parents=True, exist_ok=True)
                 try:
                     save_yaml(timeline_data, timeline_output_path)
