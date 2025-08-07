@@ -204,13 +204,13 @@ def apply_saved_gaps_to_timeline(timeline_path: Path, gap_info_path: Path) -> No
         logger.error(f"Failed to apply gaps to timeline: {e}")
 
 
-def add_video_removed_to_timeline(timeline_path: Path, removed_segments: List[Tuple[float, float]]) -> None:
+def add_video_removed_to_timeline(timeline_path: Path, removed_segments) -> None:
     """
     Add VideoRemoved labels to existing timeline JSON file for segments where blank video was applied.
 
     Args:
         timeline_path: Path to existing timeline JSON file
-        removed_segments: List of (start_time, end_time) tuples for removed video segments
+        removed_segments: List of (start_time, end_time) tuples OR (start_time, end_time, label) tuples
     """
     try:
         # Load existing timeline
@@ -219,7 +219,15 @@ def add_video_removed_to_timeline(timeline_path: Path, removed_segments: List[Tu
         existing_timeline = timeline_data.get("timeline", [])
 
         # Add VideoRemoved segments to timeline
-        for start_time, end_time in removed_segments:
+        for segment_info in removed_segments:
+            if len(segment_info) == 3:
+                # New format with label: (start_time, end_time, label)
+                start_time, end_time, label = segment_info
+            else:
+                # Old format: (start_time, end_time)
+                start_time, end_time = segment_info
+                label = "VideoRemoved"
+            
             duration = end_time - start_time
             removed_segment = {
                 "start": seconds_to_mmss(start_time),
@@ -227,7 +235,7 @@ def add_video_removed_to_timeline(timeline_path: Path, removed_segments: List[Tu
                 "duration": seconds_to_mmss(duration),
                 "type": "silence",
                 "speakers": 0,
-                "label": "VideoRemoved",
+                "label": label,
                 "audio_content": "speech_removed",
                 "note": "Original video replaced with blank video",
             }
@@ -362,6 +370,13 @@ def create_gap_video_from_blank(blank_video_path: Path, output_path: Path, durat
     """
     logger.info(f"Creating {duration:.2f}s gap video from blank video with silent audio")
 
+    # Validate inputs
+    if duration <= 0:
+        raise ValueError(f"Invalid duration: {duration}s (must be > 0)")
+    
+    if not blank_video_path.exists():
+        raise FileNotFoundError(f"Blank video file not found: {blank_video_path}")
+
     # If duration is longer than blank video, we need to loop it
     blank_properties = get_video_properties(blank_video_path)
     blank_duration = blank_properties["duration"]
@@ -419,18 +434,42 @@ def create_gap_video_from_blank(blank_video_path: Path, output_path: Path, durat
                 str(output_path),
             ]
 
-            run_subprocess_with_encoding(cmd, check=True)
-            logger.info(
-                f"Created gap video: {output_path} ({duration:.2f}s) from blank video (looped, with silent audio)"
-            )
-            return
+            try:
+                run_subprocess_with_encoding(cmd, check=True)
+                
+                # Verify output file was created successfully
+                if not output_path.exists():
+                    raise RuntimeError(f"Output file was not created: {output_path}")
+                
+                file_size = output_path.stat().st_size
+                if file_size == 0:
+                    raise RuntimeError(f"Output file is empty: {output_path}")
+                    
+                logger.info(
+                    f"Created gap video: {output_path} ({duration:.2f}s, {file_size} bytes) from blank video (looped, with silent audio)"
+                )
+                return
+            except Exception:
+                raise
 
         finally:
             if temp_list.exists():
                 temp_list.unlink()
 
-    run_subprocess_with_encoding(cmd, check=True)
-    logger.info(f"Created gap video: {output_path} ({duration:.2f}s) from blank video (trimmed, with silent audio)")
+    try:
+        run_subprocess_with_encoding(cmd, check=True)
+        
+        # Verify output file was created successfully
+        if not output_path.exists():
+            raise RuntimeError(f"Output file was not created: {output_path}")
+        
+        file_size = output_path.stat().st_size
+        if file_size == 0:
+            raise RuntimeError(f"Output file is empty: {output_path}")
+            
+        logger.info(f"Created gap video: {output_path} ({duration:.2f}s, {file_size} bytes) from blank video (trimmed, with silent audio)")
+    except Exception:
+        raise
 
 
 def merge_videos(
@@ -541,7 +580,6 @@ def merge_videos(
             for gap_start, gap_duration in gaps:
                 start_offset = (gap_start - base_time).total_seconds()
                 gap_data.append({"start_offset": start_offset, "duration": gap_duration})
-            logger.debug(f"Returning {len(gaps)} gaps for timeline integration")
             return {"gaps": gap_data}
 
         return None

@@ -163,7 +163,6 @@ def process_media_with_effects(input_path, output_path, effect_segments):
 
 def _process_with_filter_script(input_path, output_path, mute_segments, black_segments):
     """Process media using FFmpeg filter script file to avoid command line length limits."""
-    import os
     from pathlib import Path
 
     print(
@@ -365,17 +364,13 @@ def apply_blank_video_to_segments(
     else:
         temp_output = output_path
 
-    if len(speech_segments) > 50:
-        # For large numbers of segments, use the optimized filter-based approach
-        _apply_blank_video_filter_method(input_video, temp_output, speech_segments, blank_video_path, timeline_path)
-    else:
-        # For smaller numbers, use the original concat method
-        _apply_blank_video_concat_method(input_video, temp_output, speech_segments, blank_video_path, timeline_path)
+    # Always use concat method to avoid re-encoding (maintains original video quality)
+    _apply_blank_video_concat_method(input_video, temp_output, speech_segments, blank_video_path, timeline_path)
 
     # Trim the first frame for privacy preservation if requested
     if trim_first_frame:
         print("Applying privacy trimming to remove first frame...")
-        trim_first_frame(temp_output, output_path, first_frame_duration=0.033)
+        trim_first_frame_func(temp_output, output_path, first_frame_duration=0.033)
 
         # Clean up temporary file
         try:
@@ -384,192 +379,171 @@ def apply_blank_video_to_segments(
             print(f"Warning: Could not remove temporary file {temp_output}: {e}")
 
 
-def _apply_blank_video_filter_method(input_video, output_path, speech_segments, blank_video_path, timeline_path=None):
-    """
-    Use FFmpeg filter approach for large numbers of segments to avoid argument list length issues.
-    """
-    print("Using filter-based method for large number of segments...")
-
-    # Create a drawbox filter that blacks out all speech segments
-    black_filters = []
-    for start_time, end_time in speech_segments:
-        black_filters.append(
-            f"drawbox=x=0:y=0:w=iw:h=ih:color=black:t=fill:enable='between(t,{start_time},{end_time})'"
-        )
-
-    # Combine all black filters
-    video_filter = ",".join(black_filters)
-
-    # Create mute filter for the same segments
-    mute_conditions = []
-    for start_time, end_time in speech_segments:
-        mute_conditions.append(f"between(t,{start_time},{end_time})")
-
-    audio_filter = f"volume=0:enable='{'+'.join(mute_conditions)}'"
-
-    # Single FFmpeg command with complex filters
-    cmd = [
-        "ffmpeg",
-        "-y",
-        "-i",
-        str(input_video),
-        "-vf",
-        video_filter,
-        "-af",
-        audio_filter,
-        "-c:v",
-        "libx264",  # Need to re-encode when using filters
-        "-preset",
-        "fast",
-        "-crf",
-        "23",
-        "-c:a",
-        AUDIO_CODEC,
-        "-b:a",
-        AUDIO_BITRATE_STANDARD,
-        str(output_path),
-    ]
-
-    print("Processing with complex filters...")
-    run_subprocess_with_encoding(cmd, check=True)
-
-    # Add VideoRemoved segments to timeline if path provided
-    if timeline_path and timeline_path.exists():
-        from .video_merger import add_video_removed_to_timeline
-
-        add_video_removed_to_timeline(timeline_path, speech_segments)
-
 
 def _apply_blank_video_concat_method(input_video, output_path, speech_segments, blank_video_path, timeline_path=None):
     """
-    Original concat demuxer method for smaller numbers of segments.
+    Simple concat method that replaces segments marked as type: 'all' with blank video.
+    Works exactly like video merging with gap filling.
     """
     from .video_merger import create_gap_video_from_blank
+    from .utils import load_timeline
     import shutil
+
+    if not timeline_path or not timeline_path.exists():
+        raise ValueError("Timeline path is required for proper segment processing")
+
+    # Load complete timeline
+    timeline_data = load_timeline(timeline_path)
+    timeline_segments = timeline_data.get("timeline", [])
+    
+    if not timeline_segments:
+        raise ValueError("No timeline segments found in timeline file")
 
     # Create temporary directory for processing
     temp_dir = input_video.parent / "temp_blank_processing"
     temp_dir.mkdir(exist_ok=True)
 
     try:
-        # Create blank video segments for each speech segment
-        blank_videos = {}
-        for i, (speech_start, speech_end) in enumerate(speech_segments):
-            speech_duration = speech_end - speech_start
-            blank_segment_path = temp_dir / f"blank_{i}.mp4"
-            create_gap_video_from_blank(blank_video_path, blank_segment_path, speech_duration)
-            blank_videos[i] = blank_segment_path
-
-        # Create timeline items with timings
-        timeline_items = []
-
-        # Always start with a tiny video segment to ensure audio stream exists
-        min_video_start = 0.033  # Always include first ~1 frame (33ms) as video
-
-        # Add video segments (non-speech parts)
-        current_time = 0.0
-        for i, (speech_start, speech_end) in enumerate(speech_segments):
-            # Ensure we always have some video at the start
-            video_start = current_time
-            video_end = (
-                max(min_video_start, min(speech_start, current_time + min_video_start))
-                if current_time == 0
-                else speech_start
-            )
-
-            # Add video segment before this speech segment
-            if video_start < video_end:
-                timeline_items.append(("video", video_start, video_end - video_start))
-
-            # Add blank segment for this speech (but only if it doesn't overlap with our minimum video)
-            blank_start = max(video_end, speech_start)
-            if blank_start < speech_end:
-                timeline_items.append(("blank", blank_start, speech_end - blank_start, i))
-            current_time = speech_end
-
-        # Add final video segment if needed
+        def hhmmss_to_seconds(time_str):
+            """Convert HH:MM:SS format to seconds."""
+            parts = time_str.split(":")
+            if len(parts) == 3:  # HH:MM:SS
+                hours = int(parts[0])
+                minutes = int(parts[1])
+                seconds = float(parts[2])
+                return hours * 3600 + minutes * 60 + seconds
+            elif len(parts) == 2:  # MM:SS
+                minutes = int(parts[0])
+                seconds = float(parts[1])
+                return minutes * 60 + seconds
+            else:
+                return float(time_str)
+        
+        # Get total video duration
         probe_cmd = ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", str(input_video)]
         result = subprocess.run(probe_cmd, capture_output=True, text=True, check=True)
         import json
-
         video_info = json.loads(result.stdout)
         total_duration = float(video_info["format"]["duration"])
-
+        
+        # Extract privacy segments (type: "all") and sort them
+        privacy_segments = []
+        for segment in timeline_segments:
+            if segment.get("type") == "all":
+                start_seconds = hhmmss_to_seconds(segment["start"])
+                end_seconds = hhmmss_to_seconds(segment["end"])
+                duration = end_seconds - start_seconds
+                
+                # Skip segments that are too short
+                if duration < 0.1:
+                    print(f"Warning: Skipping very short segment ({duration:.6f}s) - below minimum 0.1s threshold")
+                    continue
+                    
+                privacy_segments.append((start_seconds, end_seconds, segment.get("label", "")))
+        
+        privacy_segments.sort(key=lambda x: x[0])  # Sort by start time
+        print(f"Found {len(privacy_segments)} privacy segments to process")
+        
+        if not privacy_segments:
+            print("No privacy segments to process - copying original file")
+            shutil.copy(input_video, output_path)
+            return
+        
+        # Build simple concat list: alternate between video segments and blank segments
+        concat_list = []
+        current_time = 0.0
+        blank_index = 0
+        
+        for start_seconds, end_seconds, label in privacy_segments:
+            # Add original video segment before this privacy segment
+            if current_time < start_seconds:
+                video_duration = start_seconds - current_time
+                video_segment_path = temp_dir / f"video_{current_time:.3f}_{video_duration:.3f}.mp4"
+                
+                # Extract video segment
+                extract_cmd = [
+                    "ffmpeg", "-loglevel", "error", "-y",
+                    "-i", str(input_video),
+                    "-ss", str(current_time),
+                    "-t", str(video_duration),
+                    "-c", "copy", str(video_segment_path),
+                ]
+                run_subprocess_with_encoding(extract_cmd, check=True)
+                concat_list.append(str(video_segment_path.resolve()))
+            
+            # Add blank segment for privacy removal
+            blank_duration = end_seconds - start_seconds
+            blank_segment_path = temp_dir / f"blank_{blank_index}.mp4"
+            
+            print(f"Creating blank video {blank_index} for {blank_duration:.3f}s segment ({label})")
+            create_gap_video_from_blank(blank_video_path, blank_segment_path, blank_duration)
+            
+            if not blank_segment_path.exists() or blank_segment_path.stat().st_size == 0:
+                raise RuntimeError(f"Failed to create blank video: {blank_segment_path}")
+                
+            concat_list.append(str(blank_segment_path.resolve()))
+            blank_index += 1
+            current_time = end_seconds
+        
+        # Add final video segment if needed
         if current_time < total_duration:
-            timeline_items.append(("video", current_time, total_duration - current_time))
-
-        # Create concat list using the same approach as video merger
-        concat_list_path = temp_dir / "concat_list.txt"
-
-        # Process video segments
-        video_segments_to_extract = []
-        with open(concat_list_path, "w") as f:
-            for item in timeline_items:
-                if item[0] == "video":
-                    # Extract video segment
-                    start_time, duration = item[1], item[2]
-                    if duration > 0:  # Only add if duration > 0
-                        video_segment_path = temp_dir / f"video_{start_time:.3f}_{duration:.3f}.mp4"
-                        video_segments_to_extract.append((start_time, duration, video_segment_path))
-                        f.write(f"file '{video_segment_path.resolve()}'\n")
-                elif item[0] == "blank":
-                    # Use pre-created blank video
-                    blank_index = item[3]
-                    blank_video = blank_videos[blank_index]
-                    f.write(f"file '{blank_video.resolve()}'\n")
-
-        # Extract all video segments
-        for start_time, duration, video_segment_path in video_segments_to_extract:
+            final_duration = total_duration - current_time
+            final_segment_path = temp_dir / f"video_{current_time:.3f}_{final_duration:.3f}.mp4"
+            
             extract_cmd = [
-                "ffmpeg",
-                "-y",
-                "-i",
-                str(input_video),
-                "-ss",
-                str(start_time),
-                "-t",
-                str(duration),
-                "-c",
-                "copy",
-                str(video_segment_path),
+                "ffmpeg", "-loglevel", "error", "-y",
+                "-i", str(input_video),
+                "-ss", str(current_time),
+                "-t", str(final_duration),
+                "-c", "copy", str(final_segment_path),
             ]
             run_subprocess_with_encoding(extract_cmd, check=True)
+            concat_list.append(str(final_segment_path.resolve()))
+        
+        # Create concat file
+        concat_file = temp_dir / "concat_list.txt"
+        with open(concat_file, "w") as f:
+            for file_path in concat_list:
+                f.write(f"file '{file_path}'\n")
 
-        # Use concat demuxer with video copy but audio re-encode for reliability
-        concat_cmd = [
-            "ffmpeg",
-            "-y",
-            "-f",
-            "concat",
-            "-safe",
-            "0",
-            "-i",
-            str(concat_list_path),
-            "-c:v",
-            "copy",  # Keep video stream copy for speed
-            "-c:a",
-            AUDIO_CODEC,  # Re-encode audio for consistency
-            "-b:a",
-            AUDIO_BITRATE_STANDARD,  # Set audio bitrate
+        # Concatenate all segments
+        print(f"Concatenating {len(concat_list)} segments...")
+        final_concat_cmd = [
+            "ffmpeg", "-loglevel", "error", "-y",
+            "-f", "concat", "-safe", "0", "-i", str(concat_file),
+            "-c", "copy",  # Stream copy to maintain quality
             str(output_path),
         ]
-
-        print("Concatenating segments...")
-        run_subprocess_with_encoding(concat_cmd, check=True)
+        
+        run_subprocess_with_encoding(final_concat_cmd, check=True)
+        print(f"Successfully created output: {output_path}")
 
         # Add VideoRemoved segments to timeline if path provided
         if timeline_path and timeline_path.exists():
             from .video_merger import add_video_removed_to_timeline
-
-            add_video_removed_to_timeline(timeline_path, speech_segments)
+            
+            # Extract segments that were actually processed
+            removed_segments_with_labels = []
+            for start_seconds, end_seconds, label in privacy_segments:
+                new_label = f"Removed {label}".strip() if label else "Removed"
+                removed_segments_with_labels.append((start_seconds, end_seconds, new_label))
+            
+            add_video_removed_to_timeline(timeline_path, removed_segments_with_labels)
 
     finally:
-        # Clean up temporary directory
+        # Clean up temporary directory but preserve concat list
         if temp_dir.exists():
+            # Move concat list to parent directory to preserve it
+            final_concat_list = input_video.parent / "concat_list.txt"
+            if concat_file.exists():
+                shutil.move(str(concat_file), str(final_concat_list))
+                print(f"Concat list preserved at: {final_concat_list}")
+            
+            # Remove temporary directory with all other files
             shutil.rmtree(temp_dir)
 
 
-def trim_first_frame(input_video, output_path, first_frame_duration=0.033):
+def trim_first_frame_func(input_video, output_path, first_frame_duration=0.033):
     """
     Trim the first frame from a video for privacy preservation.
 

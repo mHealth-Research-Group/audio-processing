@@ -411,8 +411,9 @@ def apply_blank_command(args):
                     start_time = mmss_to_seconds(segment["start"])
                     end_time = mmss_to_seconds(segment["end"])
                     blank_segments.append((start_time, end_time))
-                    # Mark segment as removed
-                    segment["label"] = "removed"
+                    # Keep existing label or set to "Removed" if none provided
+                    if not segment.get("label"):
+                        segment["label"] = "Removed"
                     timeline_modified = True
 
         if not blank_segments:
