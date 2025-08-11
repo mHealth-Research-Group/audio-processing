@@ -89,8 +89,39 @@ uv run main.py process /path/to/videos --merge-only --output merged.mp4
 uv run main.py compress video.mp4 -o compressed.mp4
 ```
 
+### Rename files from CSV
+Rename files based on CSV data and set modified timestamp metadata:
+```bash
+uv run python rename_from_csv.py filenames.csv --dry-run
+uv run python rename_from_csv.py filenames.csv  # Apply changes
+```
+
+CSV format: `timestamp,filepath`
+```csv
+timestamp,filepath
+20240811143022,data/video1.mp4
+20240811144530,data/video2.mp4
+```
+
+This will:
+- Rename files to `YYYYMMDD_compressed` format (e.g., `20240811_compressed.mp4`)
+- Set file modified timestamp to match the original timestamp
+
 ## File Naming
 
+### Input Files
 For automatic video merging, use timestamp format: `YYYYMMDDHHMMSS_*.ext`
 
 Example: `20231026183000_camera1.mp4`
+
+### Output Files
+The tool generates output files with the following naming conventions:
+
+- **Merged videos**: `YYYYMMDD_merged.mp4` (based on first clip's date)
+- **Processed videos**: `YYYYMMDD_processed.mp4` (based on original timestamp)
+- **Blanked videos**: Same name as processed video (preserves `_processed` suffix)
+- **Compressed videos**: `YYYYMMDD_compressed.mp4` (based on original timestamp)
+
+Examples:
+- Input: `20240811143022_video.mp4` → Processed: `20240811_processed.mp4`
+- Input: `20240811143022_video.mp4` → Compressed: `20240811_compressed.mp4`

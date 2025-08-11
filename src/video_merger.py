@@ -9,7 +9,7 @@ import shutil
 import subprocess
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import List, Tuple, Optional, Dict, Any
+from typing import List, Optional, Dict, Any
 
 from .utils import (
     run_subprocess_with_encoding,
@@ -59,7 +59,7 @@ def format_duration_mmss(seconds: float) -> str:
 
 
 def add_video_gaps_to_timeline(
-    timeline_path: Path, segments: List[VideoSegment], gaps: List[Tuple[datetime, float]]
+    timeline_path: Path, segments: List[VideoSegment], gaps: List[tuple[datetime, float]]
 ) -> None:
     """
     Add video gap information to existing timeline JSON file.
@@ -120,7 +120,7 @@ def add_video_gaps_to_timeline(
         logger.error(f"Failed to update timeline with video gaps: {e}")
 
 
-def save_gap_info(segments: List[VideoSegment], gaps: List[Tuple[datetime, float]], gap_info_path: Path) -> None:
+def save_gap_info(segments: List[VideoSegment], gaps: List[tuple[datetime, float]], gap_info_path: Path) -> None:
     """
     Save gap information to a JSON file for later addition to timeline.
 
@@ -335,7 +335,7 @@ def analyze_video_directory(directory: Path) -> List[VideoSegment]:
 
 def detect_gaps(
     segments: List[VideoSegment], min_gap_threshold: float = 2.0, max_gap_threshold: Optional[float] = None
-) -> List[Tuple[datetime, float]]:
+) -> List[tuple[datetime, float]]:
     """
     Detects gaps between video segments that meet the threshold criteria.
 
