@@ -2,6 +2,8 @@ import subprocess
 import sys
 import yaml
 from pathlib import Path
+from datetime import datetime
+from typing import List, Optional
 
 # Video and audio file extensions
 VIDEO_EXTENSIONS = {".mp4", ".avi", ".mov", ".mkv", ".webm", ".flv", ".wmv", ".m4v"}
@@ -184,3 +186,61 @@ def find_media_files(directory: Path):
         if file_path.is_file() and (is_video_file(file_path) or is_audio_file(file_path)):
             media_files.append(file_path)
     return sorted(media_files)
+
+
+def extract_timestamp_from_filename(filename: str) -> Optional[datetime]:
+    """Extract timestamp from filename with format YYYYMMDDHHMMSS_XXXXXX.ext"""
+    import re
+
+    match = re.match(r"(\d{14})_", filename)
+    if match:
+        try:
+            return datetime.strptime(match.group(1), "%Y%m%d%H%M%S")
+        except ValueError:
+            return None
+    return None
+
+
+def generate_merged_filename(video_files: List[Path]) -> str:
+    """Generate filename for merged video: YYYYMMDD-from-first-clip_merged.mp4"""
+    if not video_files:
+        return "merged.mp4"
+
+    # Find first timestamped video
+    first_timestamp = None
+    for video_file in sorted(video_files):
+        timestamp = extract_timestamp_from_filename(video_file.name)
+        if timestamp:
+            first_timestamp = timestamp
+            break
+
+    if first_timestamp:
+        # Format: YYYYMMDD_merged.mp4 (e.g., 20240811_merged.mp4)
+        day_str = first_timestamp.strftime("%Y%m%d")
+        return f"{day_str}_merged.mp4"
+    else:
+        return "merged.mp4"
+
+
+def generate_processed_filename(input_path: Path) -> str:
+    """Generate filename for processed video: YYYYMMDD_processed.mp4"""
+    timestamp = extract_timestamp_from_filename(input_path.name)
+    if timestamp:
+        # Format: YYYYMMDD_processed.mp4 (e.g., 20240811_processed.mp4)
+        day_str = timestamp.strftime("%Y%m%d")
+        return f"{day_str}_processed.mp4"
+    else:
+        # Fallback to original name with _processed suffix
+        return f"{input_path.stem}_processed{input_path.suffix}"
+
+
+def generate_compressed_filename(input_path: Path) -> str:
+    """Generate filename for compressed video: YYYYMMDD_compressed.mp4"""
+    timestamp = extract_timestamp_from_filename(input_path.name)
+    if timestamp:
+        # Format: YYYYMMDD_compressed.mp4 (e.g., 20240811_compressed.mp4)
+        day_str = timestamp.strftime("%Y%m%d")
+        return f"{day_str}_compressed.mp4"
+    else:
+        # Fallback to original name with _compressed suffix
+        return f"{input_path.stem}_compressed{input_path.suffix}"

@@ -227,7 +227,7 @@ def add_video_removed_to_timeline(timeline_path: Path, removed_segments) -> None
                 # Old format: (start_time, end_time)
                 start_time, end_time = segment_info
                 label = "VideoRemoved"
-            
+
             duration = end_time - start_time
             removed_segment = {
                 "start": seconds_to_mmss(start_time),
@@ -373,7 +373,7 @@ def create_gap_video_from_blank(blank_video_path: Path, output_path: Path, durat
     # Validate inputs
     if duration <= 0:
         raise ValueError(f"Invalid duration: {duration}s (must be > 0)")
-    
+
     if not blank_video_path.exists():
         raise FileNotFoundError(f"Blank video file not found: {blank_video_path}")
 
@@ -436,15 +436,15 @@ def create_gap_video_from_blank(blank_video_path: Path, output_path: Path, durat
 
             try:
                 run_subprocess_with_encoding(cmd, check=True)
-                
+
                 # Verify output file was created successfully
                 if not output_path.exists():
                     raise RuntimeError(f"Output file was not created: {output_path}")
-                
+
                 file_size = output_path.stat().st_size
                 if file_size == 0:
                     raise RuntimeError(f"Output file is empty: {output_path}")
-                    
+
                 logger.info(
                     f"Created gap video: {output_path} ({duration:.2f}s, {file_size} bytes) from blank video (looped, with silent audio)"
                 )
@@ -458,16 +458,18 @@ def create_gap_video_from_blank(blank_video_path: Path, output_path: Path, durat
 
     try:
         run_subprocess_with_encoding(cmd, check=True)
-        
+
         # Verify output file was created successfully
         if not output_path.exists():
             raise RuntimeError(f"Output file was not created: {output_path}")
-        
+
         file_size = output_path.stat().st_size
         if file_size == 0:
             raise RuntimeError(f"Output file is empty: {output_path}")
-            
-        logger.info(f"Created gap video: {output_path} ({duration:.2f}s, {file_size} bytes) from blank video (trimmed, with silent audio)")
+
+        logger.info(
+            f"Created gap video: {output_path} ({duration:.2f}s, {file_size} bytes) from blank video (trimmed, with silent audio)"
+        )
     except Exception:
         raise
 

@@ -25,6 +25,7 @@ def cleanup_gpu_memory():
         torch.cuda.synchronize()
         # Force garbage collection to free Python objects
         import gc
+
         gc.collect()
 
 
@@ -50,23 +51,23 @@ def detect_voice_segments(audio_path, model, min_duration_on=0.1, min_duration_o
     """Detect voice activity segments in an audio file."""
     print(f"Starting voice activity detection on {audio_path}...")
     start_time = time.time()
-    
+
     pipeline = VoiceActivityDetection(segmentation=model)
     hyper_parameters = {
         "min_duration_on": min_duration_on,
         "min_duration_off": min_duration_off,
     }
     pipeline.instantiate(hyper_parameters)
-    
+
     # Time the inference
     inference_start = time.time()
     vad_result = pipeline(audio_path)
     inference_time = time.time() - inference_start
-    
+
     segments = [(segment.start, segment.end) for segment in vad_result.itersegments()]
     total_time = time.time() - start_time
-    
-    print(f"Voice activity detection completed:")
+
+    print("Voice activity detection completed:")
     print(f"  Inference time: {inference_time:.2f}s")
     print(f"  Total time: {total_time:.2f}s")
     print(f"  Found {len(segments)} voice segments")
@@ -74,10 +75,10 @@ def detect_voice_segments(audio_path, model, min_duration_on=0.1, min_duration_o
         print(f"  GPU inference speed: {inference_time:.2f}s")
     else:
         print(f"  CPU inference speed: {inference_time:.2f}s")
-    
+
     # Clean up GPU memory after inference
     cleanup_gpu_memory()
-    
+
     return segments
 
 
@@ -85,14 +86,14 @@ def detect_multiple_speakers(audio_path, model, min_duration_on=0.1, min_duratio
     """Detect if there are multiple speakers in the audio file."""
     print(f"Starting multiple speaker detection on {audio_path}...")
     start_time = time.time()
-    
+
     osd_pipeline = OverlappedSpeechDetection(segmentation=model)
     hyper_parameters = {
         "min_duration_on": min_duration_on,
         "min_duration_off": min_duration_off,
     }
     osd_pipeline.instantiate(hyper_parameters)
-    
+
     # Time the overlapped speech detection inference
     osd_inference_start = time.time()
     overlapped_result = osd_pipeline(audio_path)
@@ -106,19 +107,19 @@ def detect_multiple_speakers(audio_path, model, min_duration_on=0.1, min_duratio
 
     vad_pipeline = VoiceActivityDetection(segmentation=model)
     vad_pipeline.instantiate(hyper_parameters)
-    
+
     # Time the VAD inference
     vad_inference_start = time.time()
     vad_result = vad_pipeline(audio_path)
     vad_inference_time = time.time() - vad_inference_start
-    
+
     total_speech_duration = sum(segment.end - segment.start for segment in vad_result.itersegments())
     overlap_percentage = (overlapped_duration / total_speech_duration * 100) if total_speech_duration > 0 else 0
     has_multiple_speakers = len(overlapped_segments) > 0 and overlap_percentage > 5.0
-    
+
     total_time = time.time() - start_time
-    
-    print(f"Multiple speaker detection completed:")
+
+    print("Multiple speaker detection completed:")
     print(f"  Overlapped speech inference: {osd_inference_time:.2f}s")
     print(f"  VAD inference: {vad_inference_time:.2f}s")
     print(f"  Total inference time: {osd_inference_time + vad_inference_time:.2f}s")
@@ -212,12 +213,12 @@ def analyze_speaker_segments_direct(audio_path, model, chunk_duration=10.0):
                                         "num_speakers": num_speakers.item(),
                                     }
                                 )
-                
+
                 # Critical: Clean up tensors explicitly to prevent memory leaks
                 chunks.clear()
                 chunk_start_times.clear()
                 del batch, powerset_output, multilabel_output
-                
+
                 # Clean GPU memory periodically during processing
                 if total_chunks % (batch_size * 4) == 0:  # Every 16 chunks for GPU, 4 for CPU
                     cleanup_gpu_memory()
@@ -324,12 +325,12 @@ def generate_speaker_timeline(audio_path, model, min_duration_on=0.1, min_durati
                                 "speaker_count": num_speakers.item(),
                             }
                         )
-                
+
                 # Critical: Clean up tensors explicitly to prevent memory leaks
                 chunks.clear()
                 chunk_start_times.clear()
                 del batch, powerset_output, multilabel_output
-                
+
                 # Clean GPU memory periodically during processing
                 if len(speaker_counts_timeline) % 100 == 0:  # Every 100 frames processed
                     cleanup_gpu_memory()

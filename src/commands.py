@@ -128,7 +128,7 @@ def process_single_file(args, gap_info=None):
                     # Auto-generate timeline path if not specified
                     base_path = Path(args.output) if args.output else input_path
                     timeline_output_path = base_path.parent / f"{base_path.stem}_timeline.yaml"
-                
+
                 timeline_output_path.parent.mkdir(parents=True, exist_ok=True)
                 try:
                     save_yaml(timeline_data, timeline_output_path)
@@ -222,7 +222,10 @@ def process_directory(args):
         if args.output:
             merged_output = Path(args.output)
         else:
-            merged_output = output_dir / "merged_video.mp4"
+            from .utils import generate_merged_filename
+
+            merged_filename = generate_merged_filename(video_files)
+            merged_output = output_dir / merged_filename
 
         # Check if merged video already exists and prompt user
         if merged_output.exists() and not getattr(args, "force_overwrite", False):
@@ -263,16 +266,16 @@ def process_directory(args):
             file_args.input_path = str(merged_output)
 
             # Determine the base output path for the processed file and timeline
+            from .utils import generate_processed_filename
+
             if args.output:
                 base_output_path = Path(args.output)
-                file_args.output = str(
-                    base_output_path.parent / f"{base_output_path.stem}_processed{base_output_path.suffix}"
-                )
+                processed_filename = generate_processed_filename(base_output_path)
+                file_args.output = str(base_output_path.parent / processed_filename)
             else:
                 base_output_path = merged_output
-                file_args.output = str(
-                    base_output_path.parent / f"{base_output_path.stem}_processed{base_output_path.suffix}"
-                )
+                processed_filename = generate_processed_filename(base_output_path)
+                file_args.output = str(base_output_path.parent / processed_filename)
 
             # Set timeline output path correctly
             if args.timeline_output:
@@ -308,7 +311,8 @@ def process_directory(args):
         # Determine the base output path for the processed file and timeline
         if args.output:
             base_output_path = Path(args.output).parent / media_file.name
-            file_args.output = str(output_dir / f"{media_file.stem}_processed{media_file.suffix}")
+            processed_filename = generate_processed_filename(media_file)
+            file_args.output = str(output_dir / processed_filename)
         else:
             base_output_path = media_file
             file_args.output = None
@@ -344,7 +348,7 @@ def apply_timeline_edits_command(args):
 
     _ = load_model()
     processed_count = 0
-    
+
     try:
         for timeline_path in timeline_files:
             media_path = find_media_file_for_timeline(timeline_path)
@@ -380,27 +384,29 @@ def apply_timeline_edits_command(args):
                 processed_count += 1
             except Exception as e:
                 print(f"Error processing {media_path.name}: {e}")
-            
+
             if args.effect_labels:
                 EFFECT_CONFIGS.clear()
                 EFFECT_CONFIGS.update(original_configs)
-            
+
             # Critical: Clean GPU memory after each file to prevent accumulation
             from .audio_analysis import cleanup_gpu_memory
+
             cleanup_gpu_memory()
-            
+
             # Progress indicator for long operations
             if processed_count % 5 == 0:
                 print(f"Processed {processed_count} files...")
-                
+
     except KeyboardInterrupt:
         print(f"\nOperation interrupted. Processed {processed_count} files.")
         return 1
     finally:
         # Final cleanup of GPU memory
         from .audio_analysis import cleanup_gpu_memory
+
         cleanup_gpu_memory()
-        
+
     print(f"Processing complete. Successfully processed {processed_count} files.")
     return 0
 
@@ -422,10 +428,8 @@ def apply_blank_command(args):
         print(f"Error: Blank video not found: {blank_video_path}", file=sys.stderr)
         return 1
 
-    # Set output path
-    output_path = (
-        Path(args.output) if args.output else input_video.parent / f"{input_video.stem}_blanked{input_video.suffix}"
-    )
+    # Set output path - keep same name as input if not specified (preserves _processed suffix)
+    output_path = Path(args.output) if args.output else input_video
 
     try:
         # Load timeline data
@@ -540,7 +544,13 @@ def compress_command(args):
             print(f"Error: {input_path} is not a video file", file=sys.stderr)
             return 1
 
-        output_path = args.output if args.output else None
+        if args.output:
+            output_path = args.output
+        else:
+            from .utils import generate_compressed_filename
+
+            compressed_filename = generate_compressed_filename(input_path)
+            output_path = input_path.parent / compressed_filename
 
         try:
             compress_video(
@@ -569,7 +579,10 @@ def compress_command(args):
 
         success_count = 0
         for video_file in video_files:
-            output_path = output_dir / f"{video_file.stem}_compressed{video_file.suffix}"
+            from .utils import generate_compressed_filename
+
+            compressed_filename = generate_compressed_filename(video_file)
+            output_path = output_dir / compressed_filename
 
             try:
                 compress_video(
