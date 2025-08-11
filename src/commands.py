@@ -24,7 +24,14 @@ from .utils import (
     mmss_to_seconds,
     save_yaml,
 )
-from .video_merger import merge_videos
+from .file_operations import generate_output_path
+from .merge_operations import (
+    detect_timestamped_videos,
+    setup_merge_operation,
+    perform_video_merge,
+    create_processed_video_args,
+    should_process_after_merge,
+)
 
 
 def process_single_file(args, gap_info=None):
@@ -204,84 +211,34 @@ def process_directory(args):
         if not should_exclude:
             video_files.append(video_file)
 
-    has_timestamped_videos = False
-
-    if len(video_files) > 1:
-        try:
-            from .video_merger import extract_timestamp_from_filename
-
-            timestamped_count = sum(1 for vf in video_files if extract_timestamp_from_filename(vf.name) is not None)
-            has_timestamped_videos = timestamped_count > 1
-        except ImportError:
-            pass
+    # Use refactored function to detect timestamped videos
+    has_timestamped_videos, timestamped_count = detect_timestamped_videos(video_files)
 
     if has_timestamped_videos and getattr(args, "merge_videos", False):
         print("Detected multiple timestamped videos - performing merge operation")
 
-        # Set output filename for merged video
-        if args.output:
-            merged_output = Path(args.output)
-        else:
-            from .utils import generate_merged_filename
+        # Set up merge operation using refactored function
+        merged_output, should_skip = setup_merge_operation(args, video_files, output_dir)
+        if should_skip:
+            return 0
 
-            merged_filename = generate_merged_filename(video_files)
-            merged_output = output_dir / merged_filename
-
-        # Check if merged video already exists and prompt user
-        if merged_output.exists() and not getattr(args, "force_overwrite", False):
-            print(f"Merged video already exists: {merged_output}. Use --force-overwrite to replace it.")
-            return 0  # Skip merge operation
-
-        # Check if blank video file exists
-        blank_video_path = Path(args.blank_video)
-        if not blank_video_path.exists():
-            print(f"Error: Blank video file not found: {blank_video_path}", file=sys.stderr)
+        # Perform merge operation using refactored function
+        gap_info = perform_video_merge(input_dir, merged_output, args)
+        if gap_info is None:
             return 1
 
-        # Merge videos using blank video approach
-        try:
-            # Get gap information from video merging
-            gap_info = merge_videos(
-                input_dir=input_dir,
-                output_path=merged_output,
-                blank_video=blank_video_path,
-                min_gap_threshold=getattr(args, "min_gap_threshold", 2.0),
-                max_gap_threshold=getattr(args, "max_gap_threshold", None),
-            )
-        except Exception as e:
-            print(f"Video merging failed: {e}", file=sys.stderr)
-            return 1
-
-        print(f"Video merging completed successfully: {merged_output}")
-
-        # Process the merged video if analysis/processing options are enabled
-        if (
-            args.analyze_speakers
-            or args.speaker_analysis_only
-            or args.generate_timeline
-            or not getattr(args, "merge_only", False)
-        ):
+        # Process the merged video if needed
+        if should_process_after_merge(args):
             print("\nProcessing merged video for speech analysis...")
-            file_args = argparse.Namespace(**vars(args))
-            file_args.input_path = str(merged_output)
 
-            # Determine the base output path for the processed file and timeline
-            from .utils import generate_processed_filename
-
-            if args.output:
-                base_output_path = Path(args.output)
-                processed_filename = generate_processed_filename(base_output_path)
-                file_args.output = str(base_output_path.parent / processed_filename)
-            else:
-                base_output_path = merged_output
-                processed_filename = generate_processed_filename(base_output_path)
-                file_args.output = str(base_output_path.parent / processed_filename)
+            # Create processed video args using refactored function
+            file_args = create_processed_video_args(args, merged_output)
 
             # Set timeline output path correctly
             if args.timeline_output:
-                file_args.timeline_output = str(timeline_dir / f"{base_output_path.stem}_timeline.yaml")
+                file_args.timeline_output = str(timeline_dir / f"{Path(file_args.output).stem}_timeline.yaml")
             elif args.generate_timeline:
-                file_args.timeline_output = str(timeline_dir / f"{base_output_path.stem}_timeline.yaml")
+                file_args.timeline_output = str(timeline_dir / f"{Path(file_args.output).stem}_timeline.yaml")
 
             # Process the merged video (this will mute conversations by default)
             result = process_single_file(file_args, gap_info=gap_info)
@@ -311,8 +268,7 @@ def process_directory(args):
         # Determine the base output path for the processed file and timeline
         if args.output:
             base_output_path = Path(args.output).parent / media_file.name
-            processed_filename = generate_processed_filename(media_file)
-            file_args.output = str(output_dir / processed_filename)
+            file_args.output = str(output_dir / generate_output_path(media_file, None, "process").name)
         else:
             base_output_path = media_file
             file_args.output = None
@@ -544,13 +500,7 @@ def compress_command(args):
             print(f"Error: {input_path} is not a video file", file=sys.stderr)
             return 1
 
-        if args.output:
-            output_path = args.output
-        else:
-            from .utils import generate_compressed_filename
-
-            compressed_filename = generate_compressed_filename(input_path)
-            output_path = input_path.parent / compressed_filename
+        output_path = generate_output_path(input_path, args.output, "compress")
 
         try:
             compress_video(
