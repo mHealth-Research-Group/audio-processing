@@ -18,6 +18,16 @@ warnings.filterwarnings("ignore", category=UserWarning, module="pyannote.audio.u
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
+def cleanup_gpu_memory():
+    """Clean up GPU memory to prevent memory leaks and system crashes."""
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize()
+        # Force garbage collection to free Python objects
+        import gc
+        gc.collect()
+
+
 def load_model():
     """Load the pyannote segmentation model and move to GPU if available."""
     token = os.getenv("HUGGINGFACE_ACCESS_TOKEN")
@@ -64,6 +74,9 @@ def detect_voice_segments(audio_path, model, min_duration_on=0.1, min_duration_o
         print(f"  GPU inference speed: {inference_time:.2f}s")
     else:
         print(f"  CPU inference speed: {inference_time:.2f}s")
+    
+    # Clean up GPU memory after inference
+    cleanup_gpu_memory()
     
     return segments
 
@@ -115,6 +128,9 @@ def detect_multiple_speakers(audio_path, model, min_duration_on=0.1, min_duratio
         print(f"  GPU processing speed: {total_time:.2f}s")
     else:
         print(f"  CPU processing speed: {total_time:.2f}s")
+
+    # Clean up GPU memory after inference
+    cleanup_gpu_memory()
 
     return {
         "has_multiple_speakers": has_multiple_speakers,
@@ -196,11 +212,21 @@ def analyze_speaker_segments_direct(audio_path, model, chunk_duration=10.0):
                                         "num_speakers": num_speakers.item(),
                                     }
                                 )
-                chunks = []
-                chunk_start_times = []
+                
+                # Critical: Clean up tensors explicitly to prevent memory leaks
+                chunks.clear()
+                chunk_start_times.clear()
+                del batch, powerset_output, multilabel_output
+                
+                # Clean GPU memory periodically during processing
+                if total_chunks % (batch_size * 4) == 0:  # Every 16 chunks for GPU, 4 for CPU
+                    cleanup_gpu_memory()
 
         confidence_score = (multi_speaker_chunks / total_chunks) if total_chunks > 0 else 0
         has_multiple_speakers = max_speakers_detected > 1 and confidence_score > 0.1
+
+        # Final cleanup of GPU memory
+        cleanup_gpu_memory()
 
         return {
             "has_multiple_speakers": has_multiple_speakers,
@@ -298,8 +324,15 @@ def generate_speaker_timeline(audio_path, model, min_duration_on=0.1, min_durati
                                 "speaker_count": num_speakers.item(),
                             }
                         )
-                chunks = []
-                chunk_start_times = []
+                
+                # Critical: Clean up tensors explicitly to prevent memory leaks
+                chunks.clear()
+                chunk_start_times.clear()
+                del batch, powerset_output, multilabel_output
+                
+                # Clean GPU memory periodically during processing
+                if len(speaker_counts_timeline) % 100 == 0:  # Every 100 frames processed
+                    cleanup_gpu_memory()
 
         timeline = []
         all_events = []
@@ -409,6 +442,9 @@ def generate_speaker_timeline(audio_path, model, min_duration_on=0.1, min_durati
             "has_multiple_speakers": has_multiple_speakers,
             "num_segments": len(timeline),
         }
+
+        # Final cleanup of GPU memory after timeline generation
+        cleanup_gpu_memory()
 
         return {
             "timeline": clean_timeline,

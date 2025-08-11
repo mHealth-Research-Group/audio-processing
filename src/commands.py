@@ -336,43 +336,72 @@ def apply_timeline_edits_command(args):
         print(f"No timeline files found in {directory}")
         return 1
 
+    # Add bounds checking to prevent excessive processing that could cause system crashes
+    if len(timeline_files) > 50:
+        print(f"WARNING: Found {len(timeline_files)} timeline files. Processing large batches may cause memory issues.")
+        print("Consider processing in smaller batches of 10-20 files at a time.")
+        return 1
+
     _ = load_model()
-    for timeline_path in timeline_files:
-        media_path = find_media_file_for_timeline(timeline_path)
-        if not media_path:
-            print(f"No media file found for {timeline_path.name}")
-            continue
+    processed_count = 0
+    
+    try:
+        for timeline_path in timeline_files:
+            media_path = find_media_file_for_timeline(timeline_path)
+            if not media_path:
+                print(f"No media file found for {timeline_path.name}")
+                continue
 
-        try:
-            timeline_data = load_timeline(timeline_path)
-        except Exception as e:
-            print(f"Error loading timeline {timeline_path.name}: {e}")
-            continue
+            try:
+                timeline_data = load_timeline(timeline_path)
+            except Exception as e:
+                print(f"Error loading timeline {timeline_path.name}: {e}")
+                continue
 
-        if args.effect_labels:
-            original_configs = EFFECT_CONFIGS.copy()
-            for label in EFFECT_CONFIGS:
-                EFFECT_CONFIGS[label] = {"mute_audio": False, "black_video": False}
-            for label in args.effect_labels:
-                if label in EFFECT_CONFIGS:
-                    EFFECT_CONFIGS[label] = {"mute_audio": True, "black_video": False}
+            if args.effect_labels:
+                original_configs = EFFECT_CONFIGS.copy()
+                for label in EFFECT_CONFIGS:
+                    EFFECT_CONFIGS[label] = {"mute_audio": False, "black_video": False}
+                for label in args.effect_labels:
+                    if label in EFFECT_CONFIGS:
+                        EFFECT_CONFIGS[label] = {"mute_audio": True, "black_video": False}
 
-        effect_segments = extract_segments_by_effects(timeline_data)
-        if sum(len(v) for v in effect_segments.values()) == 0:
+            effect_segments = extract_segments_by_effects(timeline_data)
+            if sum(len(v) for v in effect_segments.values()) == 0:
+                if args.effect_labels:
+                    EFFECT_CONFIGS.clear()
+                    EFFECT_CONFIGS.update(original_configs)
+                continue
+
+            output_path = media_path.parent / f"{media_path.stem}{args.output_suffix}{media_path.suffix}"
+            try:
+                process_media_with_effects(media_path, output_path, effect_segments)
+                print(f"Created edited file: {output_path.name}")
+                processed_count += 1
+            except Exception as e:
+                print(f"Error processing {media_path.name}: {e}")
+            
             if args.effect_labels:
                 EFFECT_CONFIGS.clear()
                 EFFECT_CONFIGS.update(original_configs)
-            continue
-
-        output_path = media_path.parent / f"{media_path.stem}{args.output_suffix}{media_path.suffix}"
-        try:
-            process_media_with_effects(media_path, output_path, effect_segments)
-            print(f"Created edited file: {output_path.name}")
-        except Exception as e:
-            print(f"Error processing {media_path.name}: {e}")
-        if args.effect_labels:
-            EFFECT_CONFIGS.clear()
-            EFFECT_CONFIGS.update(original_configs)
+            
+            # Critical: Clean GPU memory after each file to prevent accumulation
+            from .audio_analysis import cleanup_gpu_memory
+            cleanup_gpu_memory()
+            
+            # Progress indicator for long operations
+            if processed_count % 5 == 0:
+                print(f"Processed {processed_count} files...")
+                
+    except KeyboardInterrupt:
+        print(f"\nOperation interrupted. Processed {processed_count} files.")
+        return 1
+    finally:
+        # Final cleanup of GPU memory
+        from .audio_analysis import cleanup_gpu_memory
+        cleanup_gpu_memory()
+        
+    print(f"Processing complete. Successfully processed {processed_count} files.")
     return 0
 
 
