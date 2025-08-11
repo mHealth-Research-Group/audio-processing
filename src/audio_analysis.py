@@ -471,8 +471,23 @@ def generate_speaker_timeline(audio_path, model, min_duration_on=0.1, min_durati
         }
 
 
-def _handle_speaker_and_timeline_analysis(args, input_path, model):
-    """Helper function to handle speaker analysis and timeline generation."""
+def analyze_audio_with_timeline(args, input_path, model):
+    """
+    Analyze audio for speaker detection and generate timeline data.
+
+    This function handles both speaker analysis and timeline generation based
+    on the provided arguments.
+
+    Args:
+        args: Command arguments containing analysis options
+        input_path: Path to the audio file to analyze
+        model: Pre-loaded PyAnnote model for analysis
+
+    Returns:
+        Tuple of (voice_segments, timeline_data) where:
+        - voice_segments: List of (start, end) tuples for detected voice segments
+        - timeline_data: Dictionary containing timeline structure with metadata
+    """
     if args.analyze_speakers or args.speaker_analysis_only:
         print(f"\nAnalyzing speakers in: {input_path}")
         if args.detailed_analysis:

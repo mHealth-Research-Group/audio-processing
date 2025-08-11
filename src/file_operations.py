@@ -4,11 +4,11 @@ Handles input validation, output path generation, and file management.
 """
 
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Optional
 from .utils import is_video_file, is_audio_file, generate_processed_filename, generate_compressed_filename
 
 
-def validate_input_file(input_path: Path) -> Tuple[bool, bool]:
+def validate_input_file(input_path: Path) -> tuple[bool, bool]:
     """
     Validate input file and return file type information.
 

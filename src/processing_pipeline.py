@@ -85,10 +85,10 @@ def analyze_audio_content(context: ProcessingContext) -> Optional[Dict[str, Any]
     model = context.load_model_if_needed()
 
     # Import here to avoid circular imports
-    from .audio_analysis import _handle_speaker_and_timeline_analysis
+    from .audio_analysis import analyze_audio_with_timeline
 
     try:
-        return _handle_speaker_and_timeline_analysis(context.args, context.input_path, model)
+        return analyze_audio_with_timeline(context.args, context.input_path, model)
     except Exception as e:
         print(f"Error during audio analysis: {e}")
         return None

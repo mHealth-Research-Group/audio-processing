@@ -86,9 +86,9 @@ def process_single_file(args, gap_info=None):
             timeline_data = None
 
             if audio_for_analysis and needs_audio_analysis:
-                from .audio_analysis import _handle_speaker_and_timeline_analysis
+                from .audio_analysis import analyze_audio_with_timeline
 
-                voice_segments, timeline_data = _handle_speaker_and_timeline_analysis(args, audio_for_analysis, model)
+                voice_segments, timeline_data = analyze_audio_with_timeline(args, audio_for_analysis, model)
 
                 if voice_segments is None and not args.speaker_analysis_only:
                     print("Detecting voice segments...")
