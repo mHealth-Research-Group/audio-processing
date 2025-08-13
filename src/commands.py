@@ -211,8 +211,9 @@ def process_directory(args):
         if not should_exclude:
             video_files.append(video_file)
 
-    # Use refactored function to detect timestamped videos
     has_timestamped_videos, timestamped_count = detect_timestamped_videos(video_files)
+
+    print("args.merge_videos before merging:", args.merge_videos)
 
     if has_timestamped_videos and getattr(args, "merge_videos", False):
         print("Detected multiple timestamped videos - performing merge operation")
@@ -226,7 +227,8 @@ def process_directory(args):
         gap_info = perform_video_merge(input_dir, merged_output, args)
         if gap_info is None:
             return 1
-
+        print("args.merge_videos after merging:", args.merge_videos)
+        print("Should merge:", should_process_after_merge(args))
         # Process the merged video if needed
         if should_process_after_merge(args):
             print("\nProcessing merged video for speech analysis...")
