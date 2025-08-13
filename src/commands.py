@@ -213,8 +213,6 @@ def process_directory(args):
 
     has_timestamped_videos, timestamped_count = detect_timestamped_videos(video_files)
 
-    print("args.merge_videos before merging:", args.merge_videos)
-
     if has_timestamped_videos and getattr(args, "merge_videos", False):
         print("Detected multiple timestamped videos - performing merge operation")
 
@@ -227,8 +225,6 @@ def process_directory(args):
         gap_info = perform_video_merge(input_dir, merged_output, args)
         # Note: gap_info is None when there are no gaps (successful merge scenario)
 
-        print("args.merge_videos after merging:", args.merge_videos)
-        print("Should merge:", should_process_after_merge(args))
         # Process the merged video if needed
         if should_process_after_merge(args):
             print("\nProcessing merged video for speech analysis...")
@@ -397,13 +393,13 @@ def apply_blank_command(args):
         blank_segments = []
         mute_segments = []
         timeline_modified = False
-        
+
         if "timeline" in timeline_data:
             for segment in timeline_data["timeline"]:
                 segment_type = segment.get("type")
                 start_time = mmss_to_seconds(segment["start"])
                 end_time = mmss_to_seconds(segment["end"])
-                
+
                 if segment_type == "all":
                     # Blank video segments
                     blank_segments.append((start_time, end_time))
@@ -430,7 +426,7 @@ def apply_blank_command(args):
         # Apply blank video first if needed
         if blank_segments:
             from .media_processing import apply_blank_video_to_segments
-            
+
             # Determine whether to trim first frame (default: True, disabled with --no-trim-first-frame)
             trim_first_frame = not getattr(args, "no_trim_first_frame", False)
 
@@ -442,10 +438,10 @@ def apply_blank_command(args):
         # Apply audio muting if needed
         if mute_segments:
             from .media_processing import process_media_with_effects
-            
+
             # If we already applied blank video, use that as input for audio muting
             mute_input = output_path if blank_segments else input_video
-            
+
             effect_segments = {
                 "mute_only": mute_segments,
                 "black_only": [],

@@ -82,7 +82,6 @@ def perform_video_merge(input_dir: Path, merged_output: Path, args) -> Optional[
         )
 
         print(f"Video merge completed: {merged_output}")
-        print(f"Gap information: {gap_info}")
         return gap_info
 
     except Exception as e:
@@ -129,5 +128,5 @@ def should_process_after_merge(args) -> bool:
     Returns:
         True if processing should continue after merge
     """
-    print(f"generate_timeline: {args.generate_timeline}, analyze_speakers: {args.analyze_speakers}, merge_only: {getattr(args, 'merge_only', False)}")
+
     return (args.generate_timeline or args.analyze_speakers) and not getattr(args, "merge_only", False)
