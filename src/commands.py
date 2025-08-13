@@ -226,7 +226,9 @@ def process_directory(args):
         # Perform merge operation using refactored function
         gap_info = perform_video_merge(input_dir, merged_output, args)
         if gap_info is None:
+            print("GAP INFO IS NONE!!")
             return 1
+
         print("args.merge_videos after merging:", args.merge_videos)
         print("Should merge:", should_process_after_merge(args))
         # Process the merged video if needed

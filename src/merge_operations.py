@@ -82,6 +82,7 @@ def perform_video_merge(input_dir: Path, merged_output: Path, args) -> Optional[
         )
 
         print(f"Video merge completed: {merged_output}")
+        print(f"Gap information: {gap_info}")
         return gap_info
 
     except Exception as e:
