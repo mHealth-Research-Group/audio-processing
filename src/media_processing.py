@@ -229,11 +229,12 @@ def _process_with_filter_script(input_path, output_path, mute_segments, black_se
         with open(filter_script_path, "w") as filter_file:
             filter_file.write(";\n".join(filter_lines))
 
-        # Build FFmpeg command using filter script
+        # Build FFmpeg command using filter content directly
         ffmpeg_cmd = ["ffmpeg", "-i", str(input_path)]
 
-        # Use the newer filter_complex syntax to avoid deprecated warning
-        ffmpeg_cmd.extend(["-/filter_complex", str(filter_script_path)])
+        # Pass filter content directly to -filter_complex
+        filter_content = ";".join(filter_lines)
+        ffmpeg_cmd.extend(["-filter_complex", filter_content])
 
         # Map outputs
         if black_segments:

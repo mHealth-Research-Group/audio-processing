@@ -5,7 +5,6 @@ from dotenv import load_dotenv
 from .commands import (
     process_directory,
     process_single_file,
-    apply_timeline_edits_command,
     apply_blank_command,
     compress_command,
 )
@@ -113,16 +112,7 @@ def main():
         process_parser = subparsers.add_parser("process", help="Process a file or directory")
         add_process_arguments(process_parser)
 
-        edit_parser = subparsers.add_parser("apply-edits", help="Apply timeline-based edits")
-        edit_parser.add_argument("directory", help="Directory with timelines and media")
-        edit_parser.add_argument("--output-suffix", default="_edited", help="Suffix for output")
-        edit_parser.add_argument(
-            "--effect-labels",
-            nargs="+",
-            help="Labels to apply effects to (e.g., speaking)",
-        )
-
-        blank_parser = subparsers.add_parser("apply-blank", help="Replace timeline segments with blank video")
+        blank_parser = subparsers.add_parser("apply-blank", help="Apply timeline edits: blank video, mute audio, etc.")
         blank_parser.add_argument("input_video", help="Path to input video file")
         blank_parser.add_argument("timeline", help="Path to timeline YAML file")
         blank_parser.add_argument(
@@ -159,7 +149,6 @@ def main():
         args_list = sys.argv[1:]
         if not args_list or args_list[0] not in [
             "process",
-            "apply-edits",
             "apply-blank",
             "compress",
         ]:
@@ -184,8 +173,6 @@ def main():
                 return process_directory(args)
             else:
                 return process_single_file(args)
-        elif args.mode == "apply-edits":
-            return apply_timeline_edits_command(args)
         elif args.mode == "apply-blank":
             return apply_blank_command(args)
         elif args.mode == "compress":

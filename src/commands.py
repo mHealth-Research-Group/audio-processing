@@ -368,7 +368,7 @@ def apply_timeline_edits_command(args):
 
 
 def apply_blank_command(args):
-    """Apply blank video to speech segments from timeline."""
+    """Apply timeline edits: blank video for 'all' segments, mute audio for 'speaking'/'conversation' segments."""
     input_video = Path(args.input_video)
     timeline_path = Path(args.timeline)
     blank_video_path = Path(args.blank_video)
@@ -391,36 +391,66 @@ def apply_blank_command(args):
         # Load timeline data
         timeline_data = load_timeline(timeline_path)
 
-        # Extract segments marked as "all" for blank video replacement
+        # Extract segments by type
         blank_segments = []
+        mute_segments = []
         timeline_modified = False
+        
         if "timeline" in timeline_data:
             for segment in timeline_data["timeline"]:
-                if segment.get("type") == "all":
-                    start_time = mmss_to_seconds(segment["start"])
-                    end_time = mmss_to_seconds(segment["end"])
+                segment_type = segment.get("type")
+                start_time = mmss_to_seconds(segment["start"])
+                end_time = mmss_to_seconds(segment["end"])
+                
+                if segment_type == "all":
+                    # Blank video segments
                     blank_segments.append((start_time, end_time))
                     # Keep existing label or set to "Removed" if none provided
                     if not segment.get("label"):
                         segment["label"] = "Removed"
                     timeline_modified = True
+                elif segment_type in ["speaking", "conversation"]:
+                    # Mute audio segments
+                    mute_segments.append((start_time, end_time))
+                    timeline_modified = True
 
-        if not blank_segments:
-            print("No segments marked as 'all' found in timeline")
-            print("To mark segments for blank video replacement, edit the timeline JSON and change 'type' to 'all'")
+        # Check if any segments need processing
+        total_segments = len(blank_segments) + len(mute_segments)
+        if total_segments == 0:
+            print("No segments marked for processing found in timeline")
+            print("Edit the timeline and set 'type' to:")
+            print("  - 'all' for blank video replacement")
+            print("  - 'speaking' or 'conversation' for audio muting")
             return 0
 
-        print(f"Found {len(blank_segments)} segments marked as 'all' to replace with blank video")
+        print(f"Found {len(blank_segments)} segments for blank video, {len(mute_segments)} segments for audio muting")
 
-        # Apply blank video to marked segments
-        from .media_processing import apply_blank_video_to_segments
+        # Apply blank video first if needed
+        if blank_segments:
+            from .media_processing import apply_blank_video_to_segments
+            
+            # Determine whether to trim first frame (default: True, disabled with --no-trim-first-frame)
+            trim_first_frame = not getattr(args, "no_trim_first_frame", False)
 
-        # Determine whether to trim first frame (default: True, disabled with --no-trim-first-frame)
-        trim_first_frame = not getattr(args, "no_trim_first_frame", False)
+            apply_blank_video_to_segments(
+                input_video, output_path, blank_segments, blank_video_path, timeline_path, trim_first_frame
+            )
+            print(f"Applied blank video to {len(blank_segments)} segments")
 
-        apply_blank_video_to_segments(
-            input_video, output_path, blank_segments, blank_video_path, timeline_path, trim_first_frame
-        )
+        # Apply audio muting if needed
+        if mute_segments:
+            from .media_processing import process_media_with_effects
+            
+            # If we already applied blank video, use that as input for audio muting
+            mute_input = output_path if blank_segments else input_video
+            
+            effect_segments = {
+                "mute_only": mute_segments,
+                "black_only": [],
+                "mute_and_black": [],
+            }
+            process_media_with_effects(mute_input, output_path, effect_segments)
+            print(f"Applied audio muting to {len(mute_segments)} segments")
 
         # Save updated timeline if segments were modified
         if timeline_modified:
@@ -430,11 +460,11 @@ def apply_blank_command(args):
             except Exception as e:
                 print(f"Warning: Failed to save updated timeline: {e}")
 
-        print(f"Blank video applied successfully: {output_path}")
+        print(f"Timeline edits applied successfully: {output_path}")
         return 0
 
     except Exception as e:
-        print(f"Error applying blank video: {e}", file=sys.stderr)
+        print(f"Error applying timeline edits: {e}", file=sys.stderr)
         return 1
 
 
