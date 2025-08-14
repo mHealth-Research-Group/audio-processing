@@ -130,6 +130,22 @@ def seconds_to_mmss(seconds):
     return f"{minutes}:{secs:06.3f}"
 
 
+def hhmmss_to_seconds(time_str):
+    """Convert HH:MM:SS format to seconds."""
+    parts = time_str.split(":")
+    if len(parts) == 3:  # HH:MM:SS
+        hours = int(parts[0])
+        minutes = int(parts[1])
+        seconds = float(parts[2])
+        return hours * 3600 + minutes * 60 + seconds
+    elif len(parts) == 2:  # MM:SS
+        minutes = int(parts[0])
+        seconds = float(parts[1])
+        return minutes * 60 + seconds
+    else:
+        return float(time_str)
+
+
 def parse_time_range(time_str):
     """Parse time range string into start and end seconds."""
     if "-" in time_str:

@@ -4,7 +4,6 @@ Video merging functionality for processing multiple timestamped videos.
 
 import json
 import logging
-import re
 import shutil
 import subprocess
 from datetime import datetime, timedelta
@@ -18,6 +17,7 @@ from .utils import (
     seconds_to_mmss,
     load_timeline,
     save_yaml,
+    extract_timestamp_from_filename,
     AUDIO_CODEC,
     SILENT_AUDIO_MONO_CAMERA,
 )
@@ -49,13 +49,6 @@ def _parse_frame_rate(fr_string: str) -> float:
         except ZeroDivisionError:
             return 0.0
     return float(fr_string)
-
-
-def format_duration_mmss(seconds: float) -> str:
-    """Format duration in seconds to MM:SS.mmm format."""
-    minutes = int(seconds // 60)
-    seconds = seconds % 60
-    return f"{minutes}:{seconds:06.3f}"
 
 
 def add_video_gaps_to_timeline(
@@ -257,20 +250,6 @@ def add_video_removed_to_timeline(timeline_path: Path, removed_segments) -> None
 
     except Exception as e:
         logger.error(f"Failed to update timeline with video removed segments: {e}")
-
-
-def extract_timestamp_from_filename(filename: str) -> Optional[datetime]:
-    """
-    Extracts the timestamp from a video filename.
-    Expected format: YYYYMMDDHHMMSS_*.
-    """
-    match = re.match(r"(\d{14})_", filename)
-    if match:
-        try:
-            return datetime.strptime(match.group(1), "%Y%m%d%H%M%S")
-        except ValueError:
-            return None
-    return None
 
 
 def get_video_properties(video_path: Path) -> Dict[str, Any]:

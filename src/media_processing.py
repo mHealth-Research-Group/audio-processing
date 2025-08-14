@@ -3,9 +3,9 @@ from .utils import (
     EFFECT_CONFIGS,
     run_subprocess_with_encoding,
     mmss_to_seconds,
+    hhmmss_to_seconds,
     AUDIO_CODEC,
     AUDIO_BITRATE_STANDARD,
-    AUDIO_BITRATE_HIGH,
 )
 
 
@@ -76,70 +76,6 @@ def extract_audio_from_video(video_path, audio_path):
     run_subprocess_with_encoding(ffmpeg_cmd, check=True)
 
 
-def create_audio_filter(mute_segments):
-    """Create ffmpeg audio filter to mute specific segments."""
-    if not mute_segments:
-        return None
-
-    # For large numbers of segments, use multiple volume filters in chain
-    # to avoid command line length limits
-    if len(mute_segments) > 30:
-        # Chain multiple volume filters, each handling a subset of segments
-        filters = []
-        chunk_size = 25  # Process segments in chunks of 25
-
-        for i in range(0, len(mute_segments), chunk_size):
-            chunk = mute_segments[i : i + chunk_size]
-            enable_conditions = []
-            for start, end in chunk:
-                enable_conditions.append(f"between(t,{start},{end})")
-            combined_condition = "+".join(enable_conditions)
-            filters.append(f"volume=0:enable='{combined_condition}'")
-
-        # Chain all volume filters together
-        return ",".join(filters)
-    else:
-        # Original approach for smaller numbers of segments
-        enable_conditions = []
-        for start, end in mute_segments:
-            enable_conditions.append(f"between(t,{start},{end})")
-
-        # Combine all conditions with OR logic
-        combined_condition = "+".join(enable_conditions)
-
-        return f"volume=0:enable='{combined_condition}'"
-
-
-def create_video_filter(black_segments):
-    """Create ffmpeg video filter to black out specific segments."""
-    if not black_segments:
-        return None
-
-    # For large numbers of segments, limit the complexity to avoid command line issues
-    if len(black_segments) > 30:
-        # For many segments, create a single drawbox filter with complex enable condition
-        # Split into chunks to avoid overly long command lines
-        chunk_size = 25
-        filters = []
-
-        for i in range(0, len(black_segments), chunk_size):
-            chunk = black_segments[i : i + chunk_size]
-            enable_conditions = []
-            for start, end in chunk:
-                enable_conditions.append(f"between(t,{start},{end})")
-            combined_condition = "+".join(enable_conditions)
-            filters.append(f"drawbox=x=0:y=0:w=iw:h=ih:color=black:t=fill:enable='{combined_condition}'")
-
-        return ",".join(filters)
-    else:
-        # Original approach for smaller numbers of segments
-        filter_parts = [
-            f"drawbox=x=0:y=0:w=iw:h=ih:color=black:t=fill:enable='between(t,{start},{end})'"
-            for start, end in black_segments
-        ]
-        return ",".join(filter_parts)
-
-
 def process_media_with_effects(input_path, output_path, effect_segments):
     """Process media file with flexible effects."""
     all_mute_segments = effect_segments["mute_only"] + effect_segments["mute_and_black"]
@@ -153,160 +89,155 @@ def process_media_with_effects(input_path, output_path, effect_segments):
         )
         return
 
-    # For large numbers of segments, use filter script file to avoid command line length limits
+    # Always use concat method for reliability and consistency
     total_segments = len(all_mute_segments) + len(all_black_segments)
-    if total_segments > 30:
-        _process_with_filter_script(input_path, output_path, all_mute_segments, all_black_segments)
-    else:
-        _process_with_inline_filters(input_path, output_path, all_mute_segments, all_black_segments)
+    print(f"Using concat method for {total_segments} segments...")
+    _process_with_concat_method(input_path, output_path, all_mute_segments, all_black_segments)
 
 
-def _process_with_filter_script(input_path, output_path, mute_segments, black_segments):
-    """Process media using FFmpeg filter script file to avoid command line length limits."""
+def _process_with_concat_method(input_path, output_path, mute_segments, black_segments):
+    """Process media using concat method to avoid command line length limits completely."""
     from pathlib import Path
+    import shutil
+    import json
 
-    print(
-        f"Using filter script approach for {len(mute_segments)} mute segments and {len(black_segments)} black segments..."
-    )
+    print(f"Processing with concat method: {len(mute_segments)} mute segments, {len(black_segments)} black segments...")
 
-    # Get optimal encoder settings
-    encoder_settings = get_optimal_encoder_settings()
-
-    # Create local temp directory like the rest of the codebase does
     input_path = Path(input_path)
-    local_temp_dir = input_path.parent / "tmp"
-    local_temp_dir.mkdir(exist_ok=True)
+    output_path = Path(output_path)
 
-    # Create temporary filter script file in local tmp directory
-    filter_script_path = local_temp_dir / f"{input_path.stem}_filter_script.txt"
+    # Create temporary directory
+    temp_dir = input_path.parent / "temp_concat_processing"
+    temp_dir.mkdir(exist_ok=True)
 
     try:
-        # Write filter graph to file
-        filter_lines = []
+        # Get video duration
+        probe_cmd = ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", str(input_path)]
+        result = subprocess.run(probe_cmd, capture_output=True, text=True, check=True)
+        video_info = json.loads(result.stdout)
+        total_duration = float(video_info["format"]["duration"])
 
-        # Start with input
-        current_label = "[0:v]"
-        audio_label = "[0:a]"
+        # Combine all segments and sort by start time
+        all_segments = []
+        for start, end in mute_segments:
+            all_segments.append((start, end, "mute"))
+        for start, end in black_segments:
+            all_segments.append((start, end, "black"))
 
-        # Apply video filters if needed
-        if black_segments:
-            video_filters = []
-            for start, end in black_segments:
-                video_filters.append(f"drawbox=x=0:y=0:w=iw:h=ih:color=black:t=fill:enable='between(t,{start},{end})'")
+        all_segments.sort(key=lambda x: x[0])
 
-            filter_lines.append(f"{current_label}{','.join(video_filters)}[v_filtered]")
-            current_label = "[v_filtered]"
+        # Build timeline of segments to extract
+        concat_list = []
+        current_time = 0.0
+        segment_index = 0
 
-        # Apply audio filters if needed
-        if mute_segments:
-            # Create multiple volume filters for large numbers of segments
-            chunk_size = 25
-            temp_labels = []
+        for start_time, end_time, effect_type in all_segments:
+            # Add unaffected video segment before this effect
+            if current_time < start_time:
+                duration = start_time - current_time
+                segment_path = temp_dir / f"segment_{segment_index:04d}.mp4"
 
-            for i in range(0, len(mute_segments), chunk_size):
-                chunk = mute_segments[i : i + chunk_size]
-                enable_conditions = []
-                for start, end in chunk:
-                    enable_conditions.append(f"between(t,{start},{end})")
-                combined_condition = "+".join(enable_conditions)
+                extract_cmd = [
+                    "ffmpeg",
+                    "-loglevel",
+                    "error",
+                    "-y",
+                    "-i",
+                    str(input_path),
+                    "-ss",
+                    str(current_time),
+                    "-t",
+                    str(duration),
+                    "-c",
+                    "copy",
+                    str(segment_path),
+                ]
+                run_subprocess_with_encoding(extract_cmd, check=True)
+                concat_list.append(str(segment_path.resolve()))
+                segment_index += 1
 
-                if i == 0:
-                    input_label = audio_label
-                else:
-                    input_label = f"[a_temp{i - chunk_size}]"
+            # Add affected segment with processing
+            duration = end_time - start_time
+            segment_path = temp_dir / f"segment_{segment_index:04d}.mp4"
 
-                if i + chunk_size >= len(mute_segments):
-                    output_label = "[a_filtered]"
-                else:
-                    output_label = f"[a_temp{i}]"
-                    temp_labels.append(output_label)
+            extract_cmd = [
+                "ffmpeg",
+                "-loglevel",
+                "error",
+                "-y",
+                "-i",
+                str(input_path),
+                "-ss",
+                str(start_time),
+                "-t",
+                str(duration),
+            ]
 
-                filter_lines.append(f"{input_label}volume=0:enable='{combined_condition}'{output_label}")
+            # Apply effects based on type
+            if effect_type == "mute":
+                extract_cmd.extend(["-c:v", "copy", "-an"])  # Copy video, remove audio
+            elif effect_type == "black":
+                extract_cmd.extend(["-vf", "drawbox=x=0:y=0:w=iw:h=ih:color=black:t=fill", "-c:a", "copy"])
 
-            audio_label = "[a_filtered]"
+            extract_cmd.append(str(segment_path))
+            run_subprocess_with_encoding(extract_cmd, check=True)
+            concat_list.append(str(segment_path.resolve()))
+            segment_index += 1
+            current_time = end_time
 
-        # Write all filter lines to file
-        with open(filter_script_path, "w") as filter_file:
-            filter_file.write(";\n".join(filter_lines))
+        # Add final unaffected segment if needed
+        if current_time < total_duration:
+            duration = total_duration - current_time
+            segment_path = temp_dir / f"segment_{segment_index:04d}.mp4"
 
-        # Build FFmpeg command using filter content directly
-        ffmpeg_cmd = ["ffmpeg", "-i", str(input_path)]
+            extract_cmd = [
+                "ffmpeg",
+                "-loglevel",
+                "error",
+                "-y",
+                "-i",
+                str(input_path),
+                "-ss",
+                str(current_time),
+                "-t",
+                str(duration),
+                "-c",
+                "copy",
+                str(segment_path),
+            ]
+            run_subprocess_with_encoding(extract_cmd, check=True)
+            concat_list.append(str(segment_path.resolve()))
 
-        # Pass filter content directly to -filter_complex
-        filter_content = ";".join(filter_lines)
-        ffmpeg_cmd.extend(["-filter_complex", filter_content])
+        # Create concat list file
+        concat_file = temp_dir / "concat_list.txt"
+        with open(concat_file, "w") as f:
+            for file_path in concat_list:
+                f.write(f"file '{file_path}'\n")
 
-        # Map outputs
-        if black_segments:
-            ffmpeg_cmd.extend(["-map", "[v_filtered]"])
-        else:
-            ffmpeg_cmd.extend(["-map", "0:v"])
-
-        if mute_segments:
-            ffmpeg_cmd.extend(["-map", "[a_filtered]"])
-        else:
-            ffmpeg_cmd.extend(["-map", "0:a"])
-
-        # Set codecs
-        if black_segments:
-            ffmpeg_cmd.extend(["-c:v", encoder_settings["video_codec"], "-preset", encoder_settings["preset"]])
-            ffmpeg_cmd.extend(encoder_settings["extra_params"])
-        else:
-            ffmpeg_cmd.extend(["-c:v", "copy"])
-
-        if mute_segments:
-            ffmpeg_cmd.extend(["-c:a", AUDIO_CODEC, "-b:a", AUDIO_BITRATE_HIGH])
-        else:
-            ffmpeg_cmd.extend(["-c:a", "copy"])
-
-        ffmpeg_cmd.extend([str(output_path), "-y"])
-
-        if encoder_settings["video_codec"] == "h264_nvenc":
-            print("Using NVIDIA GPU encoding (NVENC)")
-
-        run_subprocess_with_encoding(ffmpeg_cmd, check=True)
+        # Concatenate all segments
+        print(f"Concatenating {len(concat_list)} processed segments...")
+        concat_cmd = [
+            "ffmpeg",
+            "-loglevel",
+            "error",
+            "-y",
+            "-f",
+            "concat",
+            "-safe",
+            "0",
+            "-i",
+            str(concat_file),
+            "-c",
+            "copy",
+            str(output_path),
+        ]
+        run_subprocess_with_encoding(concat_cmd, check=True)
+        print(f"Successfully created: {output_path}")
 
     finally:
-        # Clean up temporary filter script file
-        if filter_script_path.exists():
-            filter_script_path.unlink()
-        # Clean up local temp directory if it exists and is empty
-        if local_temp_dir.exists():
-            try:
-                local_temp_dir.rmdir()  # Only removes if empty
-            except OSError:
-                pass  # Directory not empty or other files exist
-
-
-def _process_with_inline_filters(input_path, output_path, mute_segments, black_segments):
-    """Process media using inline filters for smaller numbers of segments."""
-    # Get optimal encoder settings
-    encoder_settings = get_optimal_encoder_settings()
-
-    audio_filter = create_audio_filter(mute_segments)
-    video_filter = create_video_filter(black_segments)
-    ffmpeg_cmd = ["ffmpeg", "-i", str(input_path)]
-
-    if video_filter:
-        # Use GPU encoding when video processing is needed
-        ffmpeg_cmd.extend(
-            ["-vf", video_filter, "-c:v", encoder_settings["video_codec"], "-preset", encoder_settings["preset"]]
-        )
-        ffmpeg_cmd.extend(encoder_settings["extra_params"])
-    else:
-        ffmpeg_cmd.extend(["-c:v", "copy"])
-
-    if audio_filter:
-        ffmpeg_cmd.extend(["-af", audio_filter, "-c:a", AUDIO_CODEC, "-b:a", AUDIO_BITRATE_HIGH])
-    else:
-        ffmpeg_cmd.extend(["-c:a", "copy"])
-
-    ffmpeg_cmd.extend([str(output_path), "-y"])
-
-    if encoder_settings["video_codec"] == "h264_nvenc":
-        print("Using NVIDIA GPU encoding (NVENC)")
-
-    run_subprocess_with_encoding(ffmpeg_cmd, check=True)
+        # Clean up temp directory
+        if temp_dir.exists():
+            shutil.rmtree(temp_dir)
 
 
 def extract_segments_by_effects(timeline_data, target_effects=None):
@@ -404,22 +335,6 @@ def _apply_blank_video_concat_method(input_video, output_path, speech_segments, 
     temp_dir.mkdir(exist_ok=True)
 
     try:
-
-        def hhmmss_to_seconds(time_str):
-            """Convert HH:MM:SS format to seconds."""
-            parts = time_str.split(":")
-            if len(parts) == 3:  # HH:MM:SS
-                hours = int(parts[0])
-                minutes = int(parts[1])
-                seconds = float(parts[2])
-                return hours * 3600 + minutes * 60 + seconds
-            elif len(parts) == 2:  # MM:SS
-                minutes = int(parts[0])
-                seconds = float(parts[1])
-                return minutes * 60 + seconds
-            else:
-                return float(time_str)
-
         # Get total video duration
         probe_cmd = ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", str(input_video)]
         result = subprocess.run(probe_cmd, capture_output=True, text=True, check=True)
@@ -428,10 +343,32 @@ def _apply_blank_video_concat_method(input_video, output_path, speech_segments, 
         video_info = json.loads(result.stdout)
         total_duration = float(video_info["format"]["duration"])
 
-        # Extract privacy segments (type: "all") and sort them
+        # Extract segments that need effects applied (based on EFFECT_CONFIGS)
         privacy_segments = []
         for segment in timeline_segments:
-            if segment.get("type") == "all":
+            # Check if segment has type: "all" OR has a label that requires effects
+            segment_type = segment.get("type")
+            segment_label = segment.get("label", "")
+
+            should_process = False
+            effect_type = "blank"  # Default to blank replacement
+
+            if segment_type == "all":
+                should_process = True
+                effect_type = "blank"
+            elif segment_label in EFFECT_CONFIGS:
+                effects = EFFECT_CONFIGS[segment_label]
+                if effects.get("mute_audio") or effects.get("black_video"):
+                    should_process = True
+                    # Determine effect type based on config
+                    if effects.get("mute_audio") and effects.get("black_video"):
+                        effect_type = "blank"  # Full blank replacement
+                    elif effects.get("mute_audio"):
+                        effect_type = "mute"  # Audio removal only
+                    elif effects.get("black_video"):
+                        effect_type = "black"  # Video blackout only
+
+            if should_process:
                 start_seconds = hhmmss_to_seconds(segment["start"])
                 end_seconds = hhmmss_to_seconds(segment["end"])
                 duration = end_seconds - start_seconds
@@ -441,7 +378,7 @@ def _apply_blank_video_concat_method(input_video, output_path, speech_segments, 
                     print(f"Warning: Skipping very short segment ({duration:.6f}s) - below minimum 0.1s threshold")
                     continue
 
-                privacy_segments.append((start_seconds, end_seconds, segment.get("label", "")))
+                privacy_segments.append((start_seconds, end_seconds, segment_label, effect_type))
 
         privacy_segments.sort(key=lambda x: x[0])  # Sort by start time
         print(f"Found {len(privacy_segments)} privacy segments to process")
@@ -456,7 +393,7 @@ def _apply_blank_video_concat_method(input_video, output_path, speech_segments, 
         current_time = 0.0
         blank_index = 0
 
-        for start_seconds, end_seconds, label in privacy_segments:
+        for start_seconds, end_seconds, label, effect_type in privacy_segments:
             # Add original video segment before this privacy segment
             if current_time < start_seconds:
                 video_duration = start_seconds - current_time
@@ -481,18 +418,72 @@ def _apply_blank_video_concat_method(input_video, output_path, speech_segments, 
                 run_subprocess_with_encoding(extract_cmd, check=True)
                 concat_list.append(str(video_segment_path.resolve()))
 
-            # Add blank segment for privacy removal
-            blank_duration = end_seconds - start_seconds
-            blank_segment_path = temp_dir / f"blank_{blank_index}.mp4"
+            # Process segment based on effect type
+            segment_duration = end_seconds - start_seconds
 
-            print(f"Creating blank video {blank_index} for {blank_duration:.3f}s segment ({label})")
-            create_gap_video_from_blank(blank_video_path, blank_segment_path, blank_duration)
+            if effect_type == "blank":
+                # Create blank segment for full privacy removal
+                blank_segment_path = temp_dir / f"blank_{blank_index}.mp4"
+                print(f"Creating blank video {blank_index} for {segment_duration:.3f}s segment ({label})")
+                create_gap_video_from_blank(blank_video_path, blank_segment_path, segment_duration)
 
-            if not blank_segment_path.exists() or blank_segment_path.stat().st_size == 0:
-                raise RuntimeError(f"Failed to create blank video: {blank_segment_path}")
+                if not blank_segment_path.exists() or blank_segment_path.stat().st_size == 0:
+                    raise RuntimeError(f"Failed to create blank video: {blank_segment_path}")
 
-            concat_list.append(str(blank_segment_path.resolve()))
-            blank_index += 1
+                concat_list.append(str(blank_segment_path.resolve()))
+                blank_index += 1
+
+            elif effect_type == "mute":
+                # Extract segment with muted audio
+                muted_segment_path = temp_dir / f"muted_{blank_index}.mp4"
+                print(f"Creating muted segment {blank_index} for {segment_duration:.3f}s segment ({label})")
+
+                extract_cmd = [
+                    "ffmpeg",
+                    "-loglevel",
+                    "error",
+                    "-y",
+                    "-i",
+                    str(input_video),
+                    "-ss",
+                    str(start_seconds),
+                    "-t",
+                    str(segment_duration),
+                    "-c:v",
+                    "copy",  # Keep video as-is
+                    "-an",  # Remove audio
+                    str(muted_segment_path),
+                ]
+                run_subprocess_with_encoding(extract_cmd, check=True)
+                concat_list.append(str(muted_segment_path.resolve()))
+                blank_index += 1
+
+            elif effect_type == "black":
+                # Extract segment with blacked out video
+                black_segment_path = temp_dir / f"black_{blank_index}.mp4"
+                print(f"Creating black video segment {blank_index} for {segment_duration:.3f}s segment ({label})")
+
+                extract_cmd = [
+                    "ffmpeg",
+                    "-loglevel",
+                    "error",
+                    "-y",
+                    "-i",
+                    str(input_video),
+                    "-ss",
+                    str(start_seconds),
+                    "-t",
+                    str(segment_duration),
+                    "-vf",
+                    "drawbox=x=0:y=0:w=iw:h=ih:color=black:t=fill",  # Black out video
+                    "-c:a",
+                    "copy",  # Keep audio as-is
+                    str(black_segment_path),
+                ]
+                run_subprocess_with_encoding(extract_cmd, check=True)
+                concat_list.append(str(black_segment_path.resolve()))
+                blank_index += 1
+
             current_time = end_seconds
 
         # Add final video segment if needed
@@ -551,8 +542,15 @@ def _apply_blank_video_concat_method(input_video, output_path, speech_segments, 
 
             # Extract segments that were actually processed
             removed_segments_with_labels = []
-            for start_seconds, end_seconds, label in privacy_segments:
-                new_label = f"Removed {label}".strip() if label else "Removed"
+            for start_seconds, end_seconds, label, effect_type in privacy_segments:
+                if effect_type == "blank":
+                    new_label = f"Removed {label}".strip() if label else "Removed"
+                elif effect_type == "mute":
+                    new_label = f"Muted {label}".strip() if label else "Muted"
+                elif effect_type == "black":
+                    new_label = f"Blacked {label}".strip() if label else "Blacked"
+                else:
+                    new_label = f"Processed {label}".strip() if label else "Processed"
                 removed_segments_with_labels.append((start_seconds, end_seconds, new_label))
 
             add_video_removed_to_timeline(timeline_path, removed_segments_with_labels)

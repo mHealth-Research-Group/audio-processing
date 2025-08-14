@@ -353,11 +353,6 @@ def generate_speaker_timeline(audio_path, model, min_duration_on=0.1, min_durati
                     return segment["speaker_count"]
             return 0
 
-        def seconds_to_mmss(seconds):
-            minutes = int(seconds // 60)
-            secs = seconds % 60
-            return f"{minutes}:{secs:06.3f}"
-
         def create_segment(start, end, voice_active, overlapped):
             duration = end - start
             base_segment = {
