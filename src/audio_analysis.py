@@ -8,7 +8,7 @@ from pyannote.audio.pipelines import (
     VoiceActivityDetection,
 )
 from pyannote.audio.utils.powerset import Powerset
-from .utils import mmss_to_seconds, seconds_to_mmss
+from .utils import mmss_to_seconds, seconds_to_mmss, MultiStepProgressTracker
 
 
 # Suppress pyannote TensorFloat-32 (TF32) reproducibility warning
@@ -254,6 +254,17 @@ def generate_speaker_timeline(audio_path, model, min_duration_on=0.1, min_durati
     try:
         import torchaudio
 
+        # Load audio to get total duration for progress tracking
+        waveform, sample_rate = torchaudio.load(audio_path)
+        total_duration = waveform.shape[1] / sample_rate
+
+        # Use multi-step progress tracker for the 4 main steps
+        tracker = MultiStepProgressTracker(4, "Timeline Generation")
+        tracker.set_step_names(
+            ["Voice Activity Detection", "Overlapped Speech Detection", "Audio Processing", "Detailed Speaker Analysis"]
+        )
+
+        print("Step 1/4: Voice Activity Detection")
         vad_pipeline = VoiceActivityDetection(segmentation=model)
         hyper_parameters = {
             "min_duration_on": min_duration_on,
@@ -261,15 +272,18 @@ def generate_speaker_timeline(audio_path, model, min_duration_on=0.1, min_durati
         }
         vad_pipeline.instantiate(hyper_parameters)
         vad_result = vad_pipeline(audio_path)
+        tracker.complete_step(0)  # Step 1 complete
 
+        print("Step 2/4: Overlapped Speech Detection")
         osd_pipeline = OverlappedSpeechDetection(segmentation=model)
         osd_pipeline.instantiate(hyper_parameters)
         overlapped_result = osd_pipeline(audio_path)
+        tracker.complete_step(1)  # Step 2 complete
 
         voice_segments = [(s.start, s.end) for s in vad_result.itersegments()]
         overlapped_segments = [(s.start, s.end) for s in overlapped_result.itersegments()]
 
-        waveform, sample_rate = torchaudio.load(audio_path)
+        print("Step 3/4: Audio Processing")
         if waveform.shape[0] > 1:
             waveform = torch.mean(waveform, dim=0, keepdim=True)
         waveform = waveform.to(DEVICE)
@@ -278,18 +292,22 @@ def generate_speaker_timeline(audio_path, model, min_duration_on=0.1, min_durati
             waveform = resampler(waveform)
             sample_rate = 16000
 
-        total_duration = waveform.shape[1] / sample_rate
         powerset_decoder = Powerset(3, 2)
         if DEVICE.type == "cuda":
             powerset_decoder = powerset_decoder.to(DEVICE)
         to_multilabel = powerset_decoder.to_multilabel
+        tracker.complete_step(2)  # Step 3 complete
 
+        print("Step 4/4: Detailed speaker analysis")
         chunk_duration = 10.0
         chunk_size = int(chunk_duration * sample_rate)
         speaker_counts_timeline = []
         batch_size = 4 if DEVICE.type == "cuda" else 1
         chunks = []
         chunk_start_times = []
+
+        total_chunks = (waveform.shape[1] + chunk_size - 1) // chunk_size  # Ceiling division
+        processed_chunks = 0
 
         for start_sample in range(0, waveform.shape[1], chunk_size):
             end_sample = min(start_sample + chunk_size, waveform.shape[1])
@@ -330,6 +348,11 @@ def generate_speaker_timeline(audio_path, model, min_duration_on=0.1, min_durati
                 chunks.clear()
                 chunk_start_times.clear()
                 del batch, powerset_output, multilabel_output
+
+                # Update progress within step 4
+                processed_chunks += batch_size
+                step_4_progress = min(1.0, processed_chunks / total_chunks)
+                tracker.update_step(3, step_4_progress)  # Step 4 (0-based index 3)
 
                 # Clean GPU memory periodically during processing
                 if len(speaker_counts_timeline) % 100 == 0:  # Every 100 frames processed
@@ -441,6 +464,9 @@ def generate_speaker_timeline(audio_path, model, min_duration_on=0.1, min_durati
 
         # Final cleanup of GPU memory after timeline generation
         cleanup_gpu_memory()
+
+        # Complete the progress tracker
+        tracker.complete()
 
         return {
             "timeline": clean_timeline,

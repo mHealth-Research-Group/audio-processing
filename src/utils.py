@@ -1,8 +1,9 @@
 import subprocess
 import sys
 import yaml
+import time
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Optional
 
 # Video and audio file extensions
@@ -260,3 +261,261 @@ def generate_compressed_filename(input_path: Path) -> str:
     else:
         # Fallback to original name with _compressed suffix
         return f"{input_path.stem}_compressed{input_path.suffix}"
+
+
+class ProgressTracker:
+    """Track progress for operations with ETA estimation."""
+
+    def __init__(self, total_duration, operation_name="Processing"):
+        self.start_time = time.time()
+        self.last_update = self.start_time
+        self.total_duration = total_duration
+        self.operation_name = operation_name
+
+    def update(self, current_progress):
+        """Update progress and print ETA if enough time has passed."""
+        now = time.time()
+
+        # Only print updates every 3 seconds to avoid spam
+        if now - self.last_update >= 3:
+            elapsed = now - self.start_time
+            elapsed_str = str(timedelta(seconds=int(elapsed)))
+
+            progress_pct = min(100, (current_progress / self.total_duration) * 100)
+
+            if current_progress > 0:
+                # ETA calculation
+                estimated_total = elapsed * (self.total_duration / current_progress)
+                eta_seconds = estimated_total - elapsed
+                eta_str = str(timedelta(seconds=int(max(0, eta_seconds))))
+
+                print(f"Progress {self.operation_name}: {progress_pct:.1f}% | Elapsed: {elapsed_str} | ETA: {eta_str}")
+            else:
+                print(f"Progress {self.operation_name}: Starting... | Elapsed: {elapsed_str}")
+
+            self.last_update = now
+
+    def complete(self, success=True):
+        """Mark operation as complete and print final stats."""
+        elapsed = time.time() - self.start_time
+        elapsed_str = str(timedelta(seconds=int(elapsed)))
+        status = "Completed" if success else "Failed"
+        print(f"{status} {self.operation_name} in {elapsed_str}")
+
+
+class MultiStepProgressTracker:
+    """Track progress for multi-step operations with correct ETA estimation."""
+
+    def __init__(self, total_steps, operation_name="Multi-step Processing"):
+        self.start_time = time.time()
+        self.last_update = self.start_time
+        self.total_steps = total_steps
+        self.operation_name = operation_name
+        self.current_step = 0
+        self.current_step_progress = 0.0  # 0.0 to 1.0 within current step
+        self.step_names = []
+
+    def set_step_names(self, step_names):
+        """Set descriptive names for each step."""
+        self.step_names = step_names
+
+    def update_step(self, step_number, step_progress=0.0, step_name=None):
+        """Update progress within a specific step.
+
+        Args:
+            step_number: Current step (0-based index)
+            step_progress: Progress within current step (0.0 to 1.0)
+            step_name: Optional name for the current step
+        """
+        now = time.time()
+
+        self.current_step = step_number
+        self.current_step_progress = max(0.0, min(1.0, step_progress))
+
+        # Update step name if provided
+        if step_name and len(self.step_names) > step_number:
+            self.step_names[step_number] = step_name
+
+        # Only print updates every 3 seconds to avoid spam
+        if now - self.last_update >= 3:
+            self._print_progress()
+            self.last_update = now
+
+    def _print_progress(self):
+        """Print current progress with ETA using correct multi-step math."""
+        elapsed = time.time() - self.start_time
+        elapsed_str = str(timedelta(seconds=int(elapsed)))
+
+        # Calculate overall progress: completed steps + current step progress
+        overall_progress = (self.current_step + self.current_step_progress) / self.total_steps
+        overall_progress_pct = overall_progress * 100
+
+        if overall_progress > 0:
+            # ETA calculation: elapsed_time / progress_fraction - elapsed_time
+            estimated_total = elapsed / overall_progress
+            eta_seconds = estimated_total - elapsed
+            eta_str = str(timedelta(seconds=int(max(0, eta_seconds))))
+
+            # Get current step name
+            step_name = ""
+            if self.step_names and self.current_step < len(self.step_names):
+                step_name = f" ({self.step_names[self.current_step]})"
+
+            print(
+                f"Progress {self.operation_name}: {overall_progress_pct:.1f}% "
+                f"[Step {self.current_step + 1}/{self.total_steps}{step_name}] | "
+                f"Elapsed: {elapsed_str} | ETA: {eta_str}"
+            )
+        else:
+            print(f"Progress {self.operation_name}: Starting... | Elapsed: {elapsed_str}")
+
+    def complete_step(self, step_number):
+        """Mark a step as complete (convenience method)."""
+        self.update_step(step_number, 1.0)
+
+    def complete(self, success=True):
+        """Mark operation as complete and print final stats."""
+        elapsed = time.time() - self.start_time
+        elapsed_str = str(timedelta(seconds=int(elapsed)))
+        status = "Completed" if success else "Failed"
+        print(f"{status} {self.operation_name} in {elapsed_str}")
+
+
+class FFmpegProgressTracker:
+    """Track FFmpeg progress by parsing stderr output with improved performance."""
+
+    def __init__(self, operation_name="FFmpeg Processing"):
+        self.start_time = time.time()
+        self.last_update = self.start_time
+        self.operation_name = operation_name
+        self.total_duration = None
+
+    def parse_duration(self, line):
+        """Parse total duration from FFmpeg output."""
+        if "Duration:" in line and self.total_duration is None:
+            try:
+                # Extract duration in format HH:MM:SS.ss
+                duration_str = line.split("Duration:")[1].split(",")[0].strip()
+                time_parts = duration_str.split(":")
+                hours = int(time_parts[0])
+                minutes = int(time_parts[1])
+                seconds = float(time_parts[2])
+                self.total_duration = hours * 3600 + minutes * 60 + seconds
+            except (IndexError, ValueError):
+                pass
+
+    def parse_progress(self, line):
+        """Parse current progress from FFmpeg output."""
+        if "time=" in line and self.total_duration:
+            try:
+                # Extract current time in format HH:MM:SS.ss
+                time_str = line.split("time=")[1].split(" ")[0]
+                time_parts = time_str.split(":")
+                hours = int(time_parts[0])
+                minutes = int(time_parts[1])
+                seconds = float(time_parts[2])
+                current_time = hours * 3600 + minutes * 60 + seconds
+
+                now = time.time()
+                if now - self.last_update >= 3:  # Update every 3 seconds
+                    elapsed = now - self.start_time
+                    elapsed_str = str(timedelta(seconds=int(elapsed)))
+
+                    progress_pct = min(100, (current_time / self.total_duration) * 100)
+
+                    if current_time > 0:
+                        estimated_total = elapsed * (self.total_duration / current_time)
+                        eta_seconds = estimated_total - elapsed
+                        eta_str = str(timedelta(seconds=int(max(0, eta_seconds))))
+
+                        print(
+                            f"Progress {self.operation_name}: {progress_pct:.1f}% | "
+                            f"Elapsed: {elapsed_str} | ETA: {eta_str}"
+                        )
+
+                    self.last_update = now
+
+            except (IndexError, ValueError):
+                pass
+
+    def complete(self, success=True):
+        """Mark operation as complete."""
+        elapsed = time.time() - self.start_time
+        elapsed_str = str(timedelta(seconds=int(elapsed)))
+        status = "Completed" if success else "Failed"
+        print(f"{status} {self.operation_name} in {elapsed_str}")
+
+
+def optimize_ffmpeg_copy_performance():
+    """
+    Get optimized FFmpeg parameters for stream copy operations.
+
+    Returns:
+        dict: Optimized parameters for different scenarios
+    """
+    import psutil
+    import os
+
+    # Detect system capabilities
+    cpu_count = os.cpu_count() or 4
+    memory_gb = psutil.virtual_memory().total // (1024**3)
+
+    # Base optimizations for stream copy
+    base_params = [
+        "-avoid_negative_ts",
+        "make_zero",  # Handle timestamp issues
+        "-fflags",
+        "+genpts",  # Generate presentation timestamps
+        "-max_muxing_queue_size",
+        "9999",  # Prevent queue overflow
+    ]
+
+    # Memory and buffer optimizations
+    if memory_gb >= 8:
+        # High memory system - use larger buffers
+        buffer_size = "32M"
+        probesize = "100M"
+        analyzeduration = "200M"
+    elif memory_gb >= 4:
+        # Medium memory system
+        buffer_size = "16M"
+        probesize = "50M"
+        analyzeduration = "100M"
+    else:
+        # Low memory system
+        buffer_size = "8M"
+        probesize = "25M"
+        analyzeduration = "50M"
+
+    buffer_params = [
+        "-probesize",
+        probesize,
+        "-analyzeduration",
+        analyzeduration,
+        "-bufsize",
+        buffer_size,
+    ]
+
+    # Threading optimizations for copy operations
+    # Use fewer threads for copy operations to avoid overhead
+    thread_params = [
+        "-threads",
+        str(min(4, cpu_count)),  # Limit threads for copy operations
+    ]
+
+    return {
+        "base": base_params,
+        "buffer": buffer_params,
+        "threading": thread_params,
+        "all": base_params + buffer_params + thread_params,
+        "concat_specific": [
+            "-f",
+            "concat",
+            "-safe",
+            "0",
+            "-protocol_whitelist",
+            "file,pipe",
+        ]
+        + base_params
+        + buffer_params,
+    }
