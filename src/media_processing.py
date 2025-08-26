@@ -94,11 +94,224 @@ def process_media_with_effects(input_path, output_path, effect_segments):
     # Always use concat method for reliability and consistency
     total_segments = len(all_mute_segments) + len(all_black_segments)
     print(f"Using concat method for {total_segments} segments...")
-    _process_with_concat_method(input_path, output_path, all_mute_segments, all_black_segments)
+    _process_with_concat_method_optimized(input_path, output_path, all_mute_segments, all_black_segments)
+
+
+def _process_with_concat_method_optimized(input_path, output_path, mute_segments, black_segments):
+    """Optimized concat method with segment merging and progress tracking."""
+    from pathlib import Path
+    import shutil
+    import json
+    from .utils import MultiStepProgressTracker
+
+    print(f"Processing with concat method: {len(mute_segments)} mute segments, {len(black_segments)} black segments...")
+
+    # Convert segment tuples to the format expected by merge function: (start, end, label, effect_type)
+    all_segments = []
+    for start, end in mute_segments:
+        all_segments.append((start, end, "mute_audio", "mute"))
+    for start, end in black_segments:
+        all_segments.append((start, end, "black_video", "black"))
+
+    # Apply consecutive segment merging for performance
+    if len(all_segments) > 50:  # Only merge if we have many segments
+        merged_segments = merge_consecutive_segments(all_segments)
+        reduction = len(all_segments) - len(merged_segments)
+        print(f"Merged {len(all_segments)} → {len(merged_segments)} segments (reduced by {reduction})")
+
+        # Calculate estimated time
+        estimated_minutes = len(merged_segments) * 0.5  # ~0.5s per merged segment
+        if estimated_minutes > 120:
+            print(
+                f"Estimated processing time: {estimated_minutes / 60:.1f} hours for {len(merged_segments)} merged segments"
+            )
+        else:
+            print(
+                f"Estimated processing time: {estimated_minutes:.0f} minutes for {len(merged_segments)} merged segments"
+            )
+    else:
+        merged_segments = [(s, e, [label], effect_type, 1) for s, e, label, effect_type in all_segments]
+        print(f"Processing {len(merged_segments)} segments (no merging needed for small count)")
+
+    # Setup progress tracking
+    progress_tracker = MultiStepProgressTracker(3, "Video Processing")
+    progress_tracker.set_step_names(["Segment Extraction", "Processing", "Final Concatenation"])
+
+    _process_segments_optimized(input_path, output_path, merged_segments, progress_tracker)
+
+
+def _process_segments_optimized(input_path, output_path, merged_segments, progress_tracker):
+    """Process merged segments with optimization and progress tracking."""
+    from pathlib import Path
+    import shutil
+    import json
+
+    input_path = Path(input_path)
+    output_path = Path(output_path)
+
+    # Create temporary directory for processing
+    temp_dir = input_path.parent / "temp_optimized_processing"
+    temp_dir.mkdir(exist_ok=True)
+
+    try:
+        # Get video duration
+        probe_cmd = ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", str(input_path)]
+        result = subprocess.run(probe_cmd, capture_output=True, text=True, check=True)
+        video_info = json.loads(result.stdout)
+        total_duration = float(video_info["format"]["duration"])
+
+        print("Phase 1/3: Building extraction tasks...")
+        progress_tracker.update_step(0, 0.0)
+
+        # Build extraction tasks
+        extraction_tasks = []
+        concat_list = []
+        current_time = 0.0
+
+        for i, (start_seconds, end_seconds, labels, effect_type, segment_count) in enumerate(merged_segments):
+            # Add original video segment before this effect segment
+            if current_time < start_seconds:
+                video_duration = start_seconds - current_time
+                video_segment_path = temp_dir / f"video_{current_time:.3f}_{video_duration:.3f}.mp4"
+
+                extraction_tasks.append(
+                    {
+                        "type": "video",
+                        "input": str(input_path),
+                        "output": str(video_segment_path),
+                        "start": current_time,
+                        "duration": video_duration,
+                        "params": ["-c", "copy"],
+                    }
+                )
+                concat_list.append(str(video_segment_path.resolve()))
+
+            # Process effect segment
+            segment_duration = end_seconds - start_seconds
+            segment_index = len(concat_list)
+
+            if effect_type == "mute":
+                effect_segment_path = temp_dir / f"muted_{segment_index}.mp4"
+                extraction_tasks.append(
+                    {
+                        "type": "mute",
+                        "input": str(input_path),
+                        "output": str(effect_segment_path),
+                        "start": start_seconds,
+                        "duration": segment_duration,
+                        "params": ["-c:v", "copy", "-an"],
+                    }
+                )
+                concat_list.append(str(effect_segment_path.resolve()))
+
+            elif effect_type == "black":
+                effect_segment_path = temp_dir / f"black_{segment_index}.mp4"
+                extraction_tasks.append(
+                    {
+                        "type": "black",
+                        "input": str(input_path),
+                        "output": str(effect_segment_path),
+                        "start": start_seconds,
+                        "duration": segment_duration,
+                        "params": ["-vf", "drawbox=x=0:y=0:w=iw:h=ih:color=black:t=fill", "-c:a", "copy"],
+                    }
+                )
+                concat_list.append(str(effect_segment_path.resolve()))
+
+            current_time = end_seconds
+
+        # Add final video segment if needed
+        if current_time < total_duration:
+            final_duration = total_duration - current_time
+            final_segment_path = temp_dir / f"video_{current_time:.3f}_{final_duration:.3f}.mp4"
+
+            extraction_tasks.append(
+                {
+                    "type": "video",
+                    "input": str(input_path),
+                    "output": str(final_segment_path),
+                    "start": current_time,
+                    "duration": final_duration,
+                    "params": ["-c", "copy"],
+                }
+            )
+            concat_list.append(str(final_segment_path.resolve()))
+
+        print(f"Phase 2/3: Processing {len(extraction_tasks)} extraction tasks...")
+        progress_tracker.update_step(1, 0.0)
+
+        # Execute extraction tasks with progress tracking
+        successful_extractions = 0
+
+        def extract_segment_task_simple(task):
+            try:
+                cmd = ["ffmpeg", "-loglevel", "error", "-y", "-i", task["input"]]
+                cmd.extend(["-ss", str(task["start"]), "-t", str(task["duration"])])
+                cmd.extend(task["params"])
+                cmd.append(task["output"])
+
+                subprocess.run(cmd, check=True)
+                return True
+            except Exception as e:
+                print(f"Failed to extract segment {task['output']}: {e}")
+                return False
+
+        for i, task in enumerate(extraction_tasks):
+            # Print progress every 20 segments
+            if i % 20 == 0 or i == len(extraction_tasks) - 1:
+                print(f"Processing segment {i + 1}/{len(extraction_tasks)}: {task['start']:.1f}s ({task['type']})")
+
+            if extract_segment_task_simple(task):
+                successful_extractions += 1
+
+            # Update progress
+            segment_progress = (i + 1) / len(extraction_tasks)
+            progress_tracker.update_step(1, segment_progress)
+
+        progress_tracker.complete_step(1)
+        print(f"Completed extractions: {successful_extractions}/{len(extraction_tasks)}")
+
+        # Phase 3: Final concatenation
+        print("Phase 3/3: Final concatenation...")
+        progress_tracker.update_step(2, 0.0)
+
+        # Create concat file
+        concat_file = temp_dir / "concat_list.txt"
+        with open(concat_file, "w") as f:
+            for file_path in concat_list:
+                f.write(f"file '{file_path}'\n")
+
+        # Concatenate all segments
+        print(f"Concatenating {len(concat_list)} segments...")
+        concat_cmd = [
+            "ffmpeg",
+            "-loglevel",
+            "error",
+            "-y",
+            "-f",
+            "concat",
+            "-safe",
+            "0",
+            "-i",
+            str(concat_file),
+            "-c",
+            "copy",
+            str(output_path),
+        ]
+
+        subprocess.run(concat_cmd, check=True)
+        progress_tracker.complete_step(2)
+        progress_tracker.complete()
+        print(f"Successfully created output: {output_path}")
+
+    finally:
+        # Clean up temp directory
+        if temp_dir.exists():
+            shutil.rmtree(temp_dir)
 
 
 def _process_with_concat_method(input_path, output_path, mute_segments, black_segments):
-    """Process media using concat method to avoid command line length limits completely."""
+    """LEGACY: Process media using concat method to avoid command line length limits completely."""
     from pathlib import Path
     import shutil
     import json
@@ -435,16 +648,27 @@ def _apply_blank_video_concat_method(input_video, output_path, speech_segments, 
         reduction = len(privacy_segments) - len(merged_segments)
         print(f"Merged {len(privacy_segments)} → {len(merged_segments)} segments (reduced by {reduction})")
 
+        # Calculate total expected processing time for user feedback
+        estimated_minutes = len(merged_segments) * 0.8  # ~0.8s per merged segment average
+        if estimated_minutes > 120:
+            print(
+                f"Estimated processing time: {estimated_minutes / 60:.1f} hours for {len(merged_segments)} merged segments"
+            )
+        else:
+            print(
+                f"Estimated processing time: {estimated_minutes:.0f} minutes for {len(merged_segments)} merged segments"
+            )
+
         if not merged_segments:
             print("No privacy segments to process - copying original file")
             shutil.copy(input_video, output_path)
             return
 
-        # Setup progress tracking for 3 phases
+        # Setup progress tracking for 3 phases with detailed feedback
         progress_tracker = MultiStepProgressTracker(3, "Video Processing")
         progress_tracker.set_step_names(["Segment Extraction", "Blank Creation", "Final Concatenation"])
 
-        print("Phase 1/3: Extracting video segments...")
+        print("Phase 1/3: Building extraction tasks...")
         progress_tracker.update_step(0, 0.0)
 
         # Build optimized extraction tasks for parallel processing
@@ -603,6 +827,12 @@ def _apply_blank_video_concat_method(input_video, output_path, speech_segments, 
                         if success:
                             successful_extractions += 1
 
+                        # Print detailed progress every 10 segments
+                        if (i + 1) % 10 == 0 or i == len(extraction_tasks) - 1:
+                            print(
+                                f"Extraction progress: {i + 1}/{len(extraction_tasks)} segments completed ({successful_extractions} successful)"
+                            )
+
                         # Update progress (30% planning + 60% extraction)
                         extraction_progress = 0.3 + (i + 1) / len(extraction_tasks) * 0.6
                         progress_tracker.update_step(0, extraction_progress)
@@ -617,6 +847,12 @@ def _apply_blank_video_concat_method(input_video, output_path, speech_segments, 
 
             for i, task in enumerate(extraction_tasks):
                 try:
+                    # Print current segment being processed
+                    if i % 10 == 0 or i == len(extraction_tasks) - 1:
+                        print(
+                            f"Processing segment {i + 1}/{len(extraction_tasks)}: {task['start']:.1f}-{task['start'] + task['duration']:.1f}s ({task['type']})"
+                        )
+
                     success = extract_segment_task(task)
                     if success:
                         successful_extractions += 1
