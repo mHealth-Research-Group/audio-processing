@@ -91,10 +91,53 @@ def process_media_with_effects(input_path, output_path, effect_segments):
         )
         return
 
-    # Always use concat method for reliability and consistency
-    total_segments = len(all_mute_segments) + len(all_black_segments)
-    print(f"Using concat method for {total_segments} segments...")
-    _process_with_concat_method_optimized(input_path, output_path, all_mute_segments, all_black_segments)
+    # Use single-pass audio filtering to preserve exact duration
+    if all_mute_segments and not all_black_segments:
+        print(f"Using single-pass audio filtering for {len(all_mute_segments)} mute segments...")
+        _process_with_audio_filtering(input_path, output_path, all_mute_segments)
+    else:
+        # Fall back to concat method for complex effects (black video, etc.)
+        total_segments = len(all_mute_segments) + len(all_black_segments)
+        print(f"Using concat method for {total_segments} segments...")
+        _process_with_concat_method_optimized(input_path, output_path, all_mute_segments, all_black_segments)
+
+
+def _process_with_audio_filtering(input_path, output_path, mute_segments):
+    """Process media using single-pass audio filtering to preserve exact duration."""
+    from pathlib import Path
+
+    input_path = Path(input_path)
+    output_path = Path(output_path)
+
+    print(f"Applying audio muting to {len(mute_segments)} segments using single-pass filtering...")
+
+    # Build audio filter string for muting specific time ranges
+    audio_filters = []
+    for start_time, end_time in mute_segments:
+        # Use FFmpeg's volume filter with enable condition to mute during time range
+        audio_filters.append(f"volume=enable='between(t,{start_time:.6f},{end_time:.6f})':volume=0")
+
+    # Combine all filters with comma separator
+    filter_string = ",".join(audio_filters)
+
+    # Build FFmpeg command for single-pass processing
+    cmd = [
+        "ffmpeg",
+        "-loglevel",
+        "error",
+        "-y",
+        "-i",
+        str(input_path),
+        "-c:v",
+        "copy",  # Stream copy video (no re-encoding, preserves exact duration)
+        "-af",
+        filter_string,  # Apply audio filters to mute specific time ranges
+        str(output_path),
+    ]
+
+    print("Processing entire video in single pass (no segment extraction)...")
+    run_subprocess_with_encoding(cmd, check=True)
+    print(f"Successfully created output with exact duration preservation: {output_path}")
 
 
 def _process_with_concat_method_optimized(input_path, output_path, mute_segments, black_segments):
@@ -133,14 +176,21 @@ def _process_with_concat_method_optimized(input_path, output_path, mute_segments
         merged_segments = [(s, e, [label], effect_type, 1) for s, e, label, effect_type in all_segments]
         print(f"Processing {len(merged_segments)} segments (no merging needed for small count)")
 
+    # Use input seeking (-ss before -i) to prevent duration drift
+    # Disable keyframe alignment approach - use traditional with precision fix
+    use_keyframe_alignment = False
+    print(f"Using input seeking extraction to prevent duration drift with {len(merged_segments)} segments")
+
     # Setup progress tracking
     progress_tracker = MultiStepProgressTracker(3, "Video Processing")
     progress_tracker.set_step_names(["Segment Extraction", "Processing", "Final Concatenation"])
 
-    _process_segments_optimized(input_path, output_path, merged_segments, progress_tracker)
+    _process_segments_optimized(input_path, output_path, merged_segments, progress_tracker, use_keyframe_alignment)
 
 
-def _process_segments_optimized(input_path, output_path, merged_segments, progress_tracker):
+def _process_segments_optimized(
+    input_path, output_path, merged_segments, progress_tracker, use_keyframe_alignment=False
+):
     """Process merged segments with optimization and progress tracking."""
     from pathlib import Path
     import shutil
@@ -163,90 +213,36 @@ def _process_segments_optimized(input_path, output_path, merged_segments, progre
         print("Phase 1/3: Building extraction tasks...")
         progress_tracker.update_step(0, 0.0)
 
-        # Build extraction tasks
-        extraction_tasks = []
-        concat_list = []
-        current_time = 0.0
-
-        for i, (start_seconds, end_seconds, labels, effect_type, segment_count) in enumerate(merged_segments):
-            # Add original video segment before this effect segment
-            if current_time < start_seconds:
-                video_duration = start_seconds - current_time
-                video_segment_path = temp_dir / f"video_{current_time:.3f}_{video_duration:.3f}.mp4"
-
-                extraction_tasks.append(
-                    {
-                        "type": "video",
-                        "input": str(input_path),
-                        "output": str(video_segment_path),
-                        "start": current_time,
-                        "duration": video_duration,
-                        "params": ["-c", "copy"],
-                    }
-                )
-                concat_list.append(str(video_segment_path.resolve()))
-
-            # Process effect segment
-            segment_duration = end_seconds - start_seconds
-            segment_index = len(concat_list)
-
-            if effect_type == "mute":
-                effect_segment_path = temp_dir / f"muted_{segment_index}.mp4"
-                extraction_tasks.append(
-                    {
-                        "type": "mute",
-                        "input": str(input_path),
-                        "output": str(effect_segment_path),
-                        "start": start_seconds,
-                        "duration": segment_duration,
-                        "params": ["-c:v", "copy", "-an"],
-                    }
-                )
-                concat_list.append(str(effect_segment_path.resolve()))
-
-            elif effect_type == "black":
-                effect_segment_path = temp_dir / f"black_{segment_index}.mp4"
-                extraction_tasks.append(
-                    {
-                        "type": "black",
-                        "input": str(input_path),
-                        "output": str(effect_segment_path),
-                        "start": start_seconds,
-                        "duration": segment_duration,
-                        "params": ["-vf", "drawbox=x=0:y=0:w=iw:h=ih:color=black:t=fill", "-c:a", "copy"],
-                    }
-                )
-                concat_list.append(str(effect_segment_path.resolve()))
-
-            current_time = end_seconds
-
-        # Add final video segment if needed
-        if current_time < total_duration:
-            final_duration = total_duration - current_time
-            final_segment_path = temp_dir / f"video_{current_time:.3f}_{final_duration:.3f}.mp4"
-
-            extraction_tasks.append(
-                {
-                    "type": "video",
-                    "input": str(input_path),
-                    "output": str(final_segment_path),
-                    "start": current_time,
-                    "duration": final_duration,
-                    "params": ["-c", "copy"],
-                }
+        if use_keyframe_alignment:
+            # Use keyframe-aligned extraction to prevent duration drift
+            extraction_tasks, concat_list = _build_keyframe_aligned_tasks(
+                input_path, merged_segments, total_duration, temp_dir
             )
-            concat_list.append(str(final_segment_path.resolve()))
-
-        print(f"Phase 2/3: Processing {len(extraction_tasks)} extraction tasks...")
-        progress_tracker.update_step(1, 0.0)
+        else:
+            # Traditional per-segment extraction
+            extraction_tasks, concat_list = _build_traditional_extraction_tasks(
+                input_path, merged_segments, total_duration, temp_dir
+            )
 
         # Execute extraction tasks with progress tracking
         successful_extractions = 0
 
         def extract_segment_task_simple(task):
             try:
-                cmd = ["ffmpeg", "-loglevel", "error", "-y", "-i", task["input"]]
-                cmd.extend(["-ss", str(task["start"]), "-t", str(task["duration"])])
+                # Use input seeking (-ss before -i) for precise timestamp handling
+                # This avoids keyframe alignment drift that causes duration loss
+                cmd = [
+                    "ffmpeg",
+                    "-loglevel",
+                    "error",
+                    "-y",
+                    "-ss",
+                    str(task["start"]),  # Input seeking for precision
+                    "-i",
+                    task["input"],
+                    "-t",
+                    str(task["duration"]),
+                ]
                 cmd.extend(task["params"])
                 cmd.append(task["output"])
 
@@ -570,6 +566,211 @@ def merge_consecutive_segments(segments):
     merged.append((current_start, current_end, current_labels, current_type, segment_count))
 
     return merged
+
+
+def create_keyframe_aligned_chunks(merged_segments, total_duration, keyframe_interval=2.0):
+    """
+    Create keyframe-aligned extraction chunks to prevent duration drift.
+    Groups segments into larger chunks that align with keyframe boundaries.
+
+    Args:
+        merged_segments: List of (start, end, labels, effect_type, segment_count) tuples
+        total_duration: Total video duration in seconds
+        keyframe_interval: Assumed keyframe interval in seconds (default: 2.0)
+
+    Returns:
+        List of keyframe-aligned chunks with format (keyframe_start, keyframe_end, contained_segments)
+    """
+    if not merged_segments:
+        return []
+
+    # Find keyframe boundaries that encompass all segments
+    min_start = min(seg[0] for seg in merged_segments)
+    max_end = max(seg[1] for seg in merged_segments)
+
+    # Align to keyframe boundaries (round down for start, up for end)
+    keyframe_start = (int(min_start // keyframe_interval)) * keyframe_interval
+    keyframe_end = (int(max_end // keyframe_interval) + 1) * keyframe_interval
+
+    # Don't exceed video duration
+    keyframe_start = max(0, keyframe_start)
+    keyframe_end = min(total_duration, keyframe_end)
+
+    # For now, create one large chunk containing all segments
+    # Future optimization: split into multiple chunks if range is too large (>30 seconds)
+    chunk_duration = keyframe_end - keyframe_start
+    if chunk_duration > 30.0:
+        # Split into multiple keyframe-aligned chunks
+        chunks = []
+        current_start = keyframe_start
+
+        while current_start < keyframe_end:
+            chunk_end = min(current_start + 30.0, keyframe_end)
+            chunk_end = (int(chunk_end // keyframe_interval) + 1) * keyframe_interval
+            chunk_end = min(total_duration, chunk_end)
+
+            # Find segments that overlap with this chunk
+            chunk_segments = []
+            for seg in merged_segments:
+                seg_start, seg_end = seg[0], seg[1]
+                if seg_start < chunk_end and seg_end > current_start:
+                    chunk_segments.append(seg)
+
+            if chunk_segments:
+                chunks.append((current_start, chunk_end, chunk_segments))
+
+            current_start = chunk_end
+
+        return chunks
+    else:
+        # Single chunk for all segments
+        return [(keyframe_start, keyframe_end, merged_segments)]
+
+
+def _build_traditional_extraction_tasks(input_path, merged_segments, total_duration, temp_dir):
+    """Build traditional per-segment extraction tasks (original logic)."""
+    extraction_tasks = []
+    concat_list = []
+    current_time = 0.0
+
+    for i, (start_seconds, end_seconds, labels, effect_type, segment_count) in enumerate(merged_segments):
+        # Add original video segment before this effect segment
+        if current_time < start_seconds:
+            video_duration = start_seconds - current_time
+            video_segment_path = temp_dir / f"video_{current_time:.3f}_{video_duration:.3f}.mp4"
+
+            extraction_tasks.append(
+                {
+                    "type": "video",
+                    "input": str(input_path),
+                    "output": str(video_segment_path),
+                    "start": current_time,
+                    "duration": video_duration,
+                    "params": ["-c", "copy"],
+                }
+            )
+            concat_list.append(str(video_segment_path.resolve()))
+
+        # Process effect segment
+        segment_duration = end_seconds - start_seconds
+        segment_index = len(concat_list)
+
+        if effect_type == "mute":
+            effect_segment_path = temp_dir / f"muted_{segment_index}.mp4"
+            extraction_tasks.append(
+                {
+                    "type": "mute",
+                    "input": str(input_path),
+                    "output": str(effect_segment_path),
+                    "start": start_seconds,
+                    "duration": segment_duration,
+                    "params": ["-c:v", "copy", "-an"],
+                }
+            )
+            concat_list.append(str(effect_segment_path.resolve()))
+
+        elif effect_type == "black":
+            effect_segment_path = temp_dir / f"black_{segment_index}.mp4"
+            extraction_tasks.append(
+                {
+                    "type": "black",
+                    "input": str(input_path),
+                    "output": str(effect_segment_path),
+                    "start": start_seconds,
+                    "duration": segment_duration,
+                    "params": ["-vf", "drawbox=x=0:y=0:w=iw:h=ih:color=black:t=fill", "-c:a", "copy"],
+                }
+            )
+            concat_list.append(str(effect_segment_path.resolve()))
+
+        current_time = end_seconds
+
+    # Add final video segment if needed
+    if current_time < total_duration:
+        final_duration = total_duration - current_time
+        final_segment_path = temp_dir / f"video_{current_time:.3f}_{final_duration:.3f}.mp4"
+
+        extraction_tasks.append(
+            {
+                "type": "video",
+                "input": str(input_path),
+                "output": str(final_segment_path),
+                "start": current_time,
+                "duration": final_duration,
+                "params": ["-c", "copy"],
+            }
+        )
+        concat_list.append(str(final_segment_path.resolve()))
+
+    return extraction_tasks, concat_list
+
+
+def _build_keyframe_aligned_tasks(input_path, merged_segments, total_duration, temp_dir):
+    """Build keyframe-aligned extraction tasks to prevent duration drift."""
+    # Create keyframe-aligned chunks
+    keyframe_chunks = create_keyframe_aligned_chunks(merged_segments, total_duration)
+
+    extraction_tasks = []
+    concat_list = []
+    current_time = 0.0
+
+    print(f"Created {len(keyframe_chunks)} keyframe-aligned chunks for {len(merged_segments)} segments")
+
+    for chunk_idx, (chunk_start, chunk_end, chunk_segments) in enumerate(keyframe_chunks):
+        # Add video before this chunk if needed
+        if current_time < chunk_start:
+            video_duration = chunk_start - current_time
+            video_segment_path = temp_dir / f"video_{current_time:.3f}_{video_duration:.3f}.mp4"
+
+            extraction_tasks.append(
+                {
+                    "type": "video",
+                    "input": str(input_path),
+                    "output": str(video_segment_path),
+                    "start": current_time,
+                    "duration": video_duration,
+                    "params": ["-c", "copy"],
+                }
+            )
+            concat_list.append(str(video_segment_path.resolve()))
+
+        # Extract the entire keyframe-aligned chunk
+        chunk_duration = chunk_end - chunk_start
+        chunk_path = temp_dir / f"chunk_{chunk_idx}_{chunk_start:.3f}_{chunk_duration:.3f}.mp4"
+
+        extraction_tasks.append(
+            {
+                "type": "keyframe_chunk",
+                "input": str(input_path),
+                "output": str(chunk_path),
+                "keyframe_start": chunk_start,
+                "keyframe_duration": chunk_duration,
+                "keyframe_aligned": True,
+                "contained_segments": chunk_segments,
+            }
+        )
+        concat_list.append(str(chunk_path.resolve()))
+
+        current_time = chunk_end
+
+    # Add final video segment if needed
+    if current_time < total_duration:
+        final_duration = total_duration - current_time
+        final_segment_path = temp_dir / f"video_{current_time:.3f}_{final_duration:.3f}.mp4"
+
+        extraction_tasks.append(
+            {
+                "type": "video",
+                "input": str(input_path),
+                "output": str(final_segment_path),
+                "start": current_time,
+                "duration": final_duration,
+                "params": ["-c", "copy"],
+            }
+        )
+        concat_list.append(str(final_segment_path.resolve()))
+
+    return extraction_tasks, concat_list
 
 
 def _apply_blank_video_concat_method(input_video, output_path, speech_segments, blank_video_path, timeline_path=None):
