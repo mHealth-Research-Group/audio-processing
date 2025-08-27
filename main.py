@@ -11,6 +11,7 @@ from src.main import main
 
 # Silence the deprecation warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
+warnings.filterwarnings("ignore", category=UserWarning)
 
 if __name__ == "__main__":
     sys.exit(main())
