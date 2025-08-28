@@ -105,6 +105,7 @@ def process_media_with_effects(input_path, output_path, effect_segments):
 def _process_with_audio_filtering(input_path, output_path, mute_segments):
     """Process media using single-pass audio filtering to preserve exact duration."""
     from pathlib import Path
+    import os
 
     input_path = Path(input_path)
     output_path = Path(output_path)
@@ -120,23 +121,70 @@ def _process_with_audio_filtering(input_path, output_path, mute_segments):
     # Combine all filters with comma separator
     filter_string = ",".join(audio_filters)
 
-    # Build FFmpeg command for single-pass processing
-    cmd = [
-        "ffmpeg",
-        "-loglevel",
-        "error",
-        "-y",
-        "-i",
-        str(input_path),
-        "-c:v",
-        "copy",  # Stream copy video (no re-encoding, preserves exact duration)
-        "-af",
-        filter_string,  # Apply audio filters to mute specific time ranges
-        str(output_path),
-    ]
+    # Check if filter string would exceed command line limits (use temp file if too long)
+    estimated_cmd_length = len(filter_string) + 200  # Base command overhead
+    max_cmd_length = 8000  # Conservative Windows command line limit
 
-    print("Processing entire video in single pass (no segment extraction)...")
-    run_subprocess_with_encoding(cmd, check=True)
+    if estimated_cmd_length > max_cmd_length:
+        print(f"Filter string too long ({estimated_cmd_length} chars), using temporary filter file...")
+
+        # Create tmp directory in same location as input video
+        tmp_dir = input_path.parent / "tmp"
+        tmp_dir.mkdir(exist_ok=True)
+
+        # Write filter to temporary file to avoid command line length limits
+        filter_file_path = tmp_dir / "audio_filter.txt"
+        with open(filter_file_path, "w", encoding="utf-8") as f:
+            f.write(f"[0:a]{filter_string}[outa]")
+
+        try:
+            # Build FFmpeg command using filter_complex_script
+            cmd = [
+                "ffmpeg",
+                "-loglevel",
+                "error",
+                "-y",
+                "-i",
+                str(input_path),
+                "-filter_complex_script",
+                str(filter_file_path),
+                "-map",
+                "0:v",  # Map video stream
+                "-map",
+                "[outa]",  # Map filtered audio
+                "-c:v",
+                "copy",  # Stream copy video
+                str(output_path),
+            ]
+
+            print("Processing entire video in single pass using filter script file...")
+            run_subprocess_with_encoding(cmd, check=True)
+
+        finally:
+            # Clean up temporary filter file
+            try:
+                filter_file_path.unlink()
+            except OSError:
+                pass
+    else:
+        # Use direct command line approach for shorter filter strings
+        cmd = [
+            "ffmpeg",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            str(input_path),
+            "-c:v",
+            "copy",  # Stream copy video (no re-encoding, preserves exact duration)
+            "-af",
+            filter_string,  # Apply audio filters to mute specific time ranges
+            str(output_path),
+        ]
+
+        print("Processing entire video in single pass (no segment extraction)...")
+        run_subprocess_with_encoding(cmd, check=True)
+
     print(f"Successfully created output with exact duration preservation: {output_path}")
 
 
