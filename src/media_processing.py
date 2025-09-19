@@ -1,6 +1,5 @@
 import subprocess
 import concurrent.futures
-import os
 from .utils import (
     EFFECT_CONFIGS,
     run_subprocess_with_encoding,
@@ -91,21 +90,28 @@ def process_media_with_effects(input_path, output_path, effect_segments):
         )
         return
 
-    # Use single-pass audio filtering to preserve exact duration
+    # Use optimal processing method based on segment count and complexity
+    MAX_OPTIMIZED_SEGMENTS = 15000  # Optimized single-pass filtering limit
+
     if all_mute_segments and not all_black_segments:
-        print(f"Using single-pass audio filtering for {len(all_mute_segments)} mute segments...")
-        _process_with_audio_filtering(input_path, output_path, all_mute_segments)
+        segment_count = len(all_mute_segments)
+
+        if segment_count <= MAX_OPTIMIZED_SEGMENTS:
+            print(f"Using optimized single-pass audio filtering for {segment_count} mute segments...")
+            _process_with_audio_filtering_optimized(input_path, output_path, all_mute_segments)
+        else:
+            print(f"Too many mute segments ({segment_count} > {MAX_OPTIMIZED_SEGMENTS}), using concat method...")
+            _process_with_concat_method_optimized(input_path, output_path, all_mute_segments, [])
     else:
         # Fall back to concat method for complex effects (black video, etc.)
         total_segments = len(all_mute_segments) + len(all_black_segments)
-        print(f"Using concat method for {total_segments} segments...")
+        print(f"Using concat method for {total_segments} segments (mixed effects)...")
         _process_with_concat_method_optimized(input_path, output_path, all_mute_segments, all_black_segments)
 
 
 def _process_with_audio_filtering(input_path, output_path, mute_segments):
     """Process media using single-pass audio filtering to preserve exact duration."""
     from pathlib import Path
-    import os
 
     input_path = Path(input_path)
     output_path = Path(output_path)
@@ -188,11 +194,82 @@ def _process_with_audio_filtering(input_path, output_path, mute_segments):
     print(f"Successfully created output with exact duration preservation: {output_path}")
 
 
+def _process_with_audio_filtering_optimized(input_path, output_path, mute_segments):
+    """
+    Optimized single-pass audio filtering that handles large segment counts.
+
+    Uses improved FFmpeg parameters and always uses filter files to handle
+    complex filters efficiently without storage overhead.
+
+    Args:
+        input_path: Path to input video file
+        output_path: Path for final output video
+        mute_segments: List of (start_time, end_time) tuples for mute segments
+    """
+    from pathlib import Path
+
+    input_path = Path(input_path)
+    output_path = Path(output_path)
+
+    print(f"Applying optimized audio muting to {len(mute_segments)} segments...")
+
+    # Create temp directory for filter files
+    temp_dir = input_path.parent / "temp_filter_processing"
+    temp_dir.mkdir(exist_ok=True)
+
+    try:
+        # Build audio filter string for muting specific time ranges
+        audio_filters = []
+        for start_time, end_time in mute_segments:
+            audio_filters.append(f"volume=enable='between(t,{start_time:.6f},{end_time:.6f})':volume=0")
+
+        # Always use filter file for large segment counts to avoid command line limits
+        filter_string = ",".join(audio_filters)
+        filter_file_path = temp_dir / "optimized_audio_filter.txt"
+
+        print(f"Creating optimized filter file with {len(audio_filters)} filters...")
+        with open(filter_file_path, "w", encoding="utf-8") as f:
+            f.write(f"[0:a]{filter_string}[outa]")
+
+        # Build FFmpeg command using filter_complex_script with optimized parameters
+        cmd = [
+            "ffmpeg",
+            "-loglevel",
+            "info",  # Show progress information
+            "-y",  # Overwrite output
+            "-threads",
+            "0",  # Use all available threads
+            "-i",
+            str(input_path),  # Input file
+            "-filter_complex_script",
+            str(filter_file_path),  # Use filter file
+            "-map",
+            "0:v",  # Map video stream
+            "-map",
+            "[outa]",  # Map filtered audio
+            "-c:v",
+            "copy",  # Stream copy video (no re-encoding)
+            "-max_muxing_queue_size",
+            "9999",  # Handle large filter complexity
+            str(output_path),
+        ]
+
+        print("Processing entire video with optimized single-pass filtering...")
+        print("This may take time for large files. FFmpeg progress will be shown...")
+
+        run_subprocess_with_encoding(cmd, check=True)
+        print(f"Successfully created optimized output: {output_path}")
+
+    finally:
+        # Clean up temporary filter files
+        if temp_dir.exists():
+            import shutil
+
+            shutil.rmtree(temp_dir)
+
+
 def _process_with_concat_method_optimized(input_path, output_path, mute_segments, black_segments):
     """Optimized concat method with segment merging and progress tracking."""
-    from pathlib import Path
-    import shutil
-    import json
     from .utils import MultiStepProgressTracker
 
     print(f"Processing with concat method: {len(mute_segments)} mute segments, {len(black_segments)} black segments...")

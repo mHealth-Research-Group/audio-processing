@@ -29,6 +29,24 @@ def add_process_arguments(parser):
         help="Enable complete processing (equivalent to --merge-videos --generate-timeline --analyze-speakers)",
     )
 
+    # Batch processing control
+    parser.add_argument(
+        "--no-batch",
+        action="store_true",
+        help="Disable automatic batch processing for large datasets (>60 videos)",
+    )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=50,
+        help="Number of videos per batch (default: 50)",
+    )
+    parser.add_argument(
+        "--keep-batches",
+        action="store_true",
+        help="Keep intermediate batch files for debugging",
+    )
+
     parser.add_argument(
         "--min-duration-on",
         type=float,

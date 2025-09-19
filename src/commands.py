@@ -216,6 +216,35 @@ def process_directory(args):
     if has_timestamped_videos and getattr(args, "merge_videos", False):
         print("Detected multiple timestamped videos - performing merge operation")
 
+        # Check if automatic batching should be used for large datasets
+        from .batch_processing import should_use_batch_processing, process_with_automatic_batching
+
+        if should_use_batch_processing(video_files) and not getattr(args, "no_batch", False):
+            batch_size = getattr(args, "batch_size", 50)
+            num_batches = (len(video_files) + batch_size - 1) // batch_size
+            print(f"\n🚀 LARGE DATASET DETECTED ({len(video_files)} videos)")
+            print("Automatically using batch processing for optimal performance...")
+            print(f"Batch size: {len(video_files)} videos → ~{num_batches} batches of ~{batch_size} videos each")
+            print("This prevents the FFmpeg filter explosion that causes exponential slowdown.")
+            if getattr(args, "keep_batches", False):
+                print("📁 Batch files will be kept for debugging (--keep-batches)")
+
+            # Set up output path for batch processing
+            if args.output:
+                final_output = Path(args.output)
+            else:
+                # Auto-generate output name with date
+                from datetime import datetime
+
+                date_str = datetime.now().strftime("%Y%m%d")
+                final_output = output_dir / f"{date_str}_merged_processed.mp4"
+
+            # Use automatic batch processing
+            return process_with_automatic_batching(input_dir, final_output, video_files, args)
+
+        # Original logic for smaller datasets (< 60 videos)
+        print(f"Small dataset ({len(video_files)} videos) - using standard processing")
+
         # Set up merge operation using refactored function
         merged_output, should_skip = setup_merge_operation(args, video_files, output_dir)
         if should_skip:
