@@ -76,14 +76,29 @@ class BatchProcessor:
 
         # Clean any existing files
         for file in batch_dir.iterdir():
-            if file.is_file():
+            if file.is_symlink() or file.is_file():
                 file.unlink()
+            elif file.is_dir():
+                shutil.rmtree(file)
 
         # Create symlinks to original videos
+        use_copy_fallback = False
         for video_file in batch_videos:
-            symlink_path = batch_dir / video_file.name
-            if not symlink_path.exists():
-                symlink_path.symlink_to(video_file.absolute())
+            target_path = batch_dir / video_file.name
+
+            if use_copy_fallback:
+                shutil.copy2(video_file, target_path)
+                continue
+
+            try:
+                target_path.symlink_to(video_file.absolute())
+            except (OSError, NotImplementedError) as exc:
+                use_copy_fallback = True
+                shutil.copy2(video_file, target_path)
+                logger.warning(
+                    "Symlink creation failed (%s). Falling back to copying files into batches; subsequent batches will copy instead.",
+                    exc,
+                )
 
         logger.info(f"Created batch {batch_num} with {len(batch_videos)} videos")
         return batch_dir
