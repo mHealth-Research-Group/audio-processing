@@ -1,3 +1,4 @@
+# ruff: noqa: E402  # warning filters must be set before heavy imports
 import os
 import warnings
 import time

@@ -204,6 +204,42 @@ class BatchProcessor:
                 create_processed_video_args,
             )
 
+            # Fast-path: single video batches do not require merging
+            if len(video_files) == 1:
+                single_file = video_files[0]
+                timestamp = extract_timestamp_from_filename(single_file.name)
+
+                if not timestamp:
+                    logger.error("Single-video batch missing timestamped filename")
+                    return 1
+
+                logger.info(
+                    "Single video batch detected (%s); skipping merge and processing directly",
+                    single_file.name,
+                )
+
+                if should_process_after_merge(batch_args):
+                    from .commands import process_single_file
+
+                    file_args = argparse.Namespace(**vars(batch_args))
+                    file_args.input_path = str(single_file)
+                    file_args.output = str(batch_output)
+
+                    if hasattr(batch_args, "generate_timeline") and batch_args.generate_timeline:
+                        timeline_path = batch_output.parent / f"{batch_output.stem}_timeline.yaml"
+                        file_args.timeline_output = str(timeline_path)
+
+                    result = process_single_file(file_args, gap_info=None)
+                    return result
+
+                try:
+                    shutil.copy2(single_file, batch_output)
+                    logger.info("Copied single batch video to %s", batch_output)
+                    return 0
+                except Exception as exc:
+                    logger.error(f"Failed to copy single batch video: {exc}")
+                    return 1
+
             # Check if we have timestamped videos with detailed logging
             has_timestamped_videos, timestamped_count = detect_timestamped_videos(video_files)
 
