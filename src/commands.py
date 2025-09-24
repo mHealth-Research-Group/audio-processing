@@ -222,12 +222,12 @@ def process_directory(args):
         if should_use_batch_processing(video_files) and not getattr(args, "no_batch", False):
             batch_size = getattr(args, "batch_size", 50)
             num_batches = (len(video_files) + batch_size - 1) // batch_size
-            print(f"\n🚀 LARGE DATASET DETECTED ({len(video_files)} videos)")
+            print(f"LARGE DATASET DETECTED ({len(video_files)} videos)")
             print("Automatically using batch processing for optimal performance...")
-            print(f"Batch size: {len(video_files)} videos → ~{num_batches} batches of ~{batch_size} videos each")
+            print(f"Batch size: {len(video_files)} videos -> ~{num_batches} batches of ~{batch_size} videos each")
             print("This prevents the FFmpeg filter explosion that causes exponential slowdown.")
             if getattr(args, "keep_batches", False):
-                print("📁 Batch files will be kept for debugging (--keep-batches)")
+                print("Batch files will be kept for debugging (--keep-batches)")
 
             # Set up output path for batch processing
             if args.output:
