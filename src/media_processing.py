@@ -920,6 +920,7 @@ def _apply_blank_video_concat_method(input_video, output_path, speech_segments, 
     # Create temporary directory for processing
     temp_dir = input_video.parent / "temp_blank_processing"
     temp_dir.mkdir(exist_ok=True)
+    concat_file = temp_dir / "concat_list.txt"
 
     try:
         # Get total video duration
@@ -973,6 +974,285 @@ def _apply_blank_video_concat_method(input_video, output_path, speech_segments, 
         merged_segments = merge_consecutive_segments(privacy_segments)
         reduction = len(privacy_segments) - len(merged_segments)
         print(f"Merged {len(privacy_segments)} → {len(merged_segments)} segments (reduced by {reduction})")
+
+        effect_types = {effect_type for _, _, _, effect_type, _ in merged_segments}
+
+        def process_blank_segments_with_batches():
+            """Handle blank-only segments using chunked extraction batches."""
+
+            timeline_items = []
+            video_items = []
+            blank_items = []
+            current_time = 0.0
+            video_counter = 0
+            blank_counter = 0
+
+            for start_seconds, end_seconds, labels, effect_type, segment_count in merged_segments:
+                if current_time < start_seconds - 1e-6:
+                    video_item = {
+                        "type": "video",
+                        "start": current_time,
+                        "end": start_seconds,
+                        "index": video_counter,
+                    }
+                    timeline_items.append(video_item)
+                    video_items.append(video_item)
+                    video_counter += 1
+
+                blank_item = {
+                    "type": "blank",
+                    "start": start_seconds,
+                    "end": end_seconds,
+                    "labels": labels,
+                    "segment_count": segment_count,
+                    "index": blank_counter,
+                }
+                timeline_items.append(blank_item)
+                blank_items.append(blank_item)
+                blank_counter += 1
+
+                current_time = end_seconds
+
+            if current_time < total_duration - 1e-6:
+                video_item = {
+                    "type": "video",
+                    "start": current_time,
+                    "end": total_duration,
+                    "index": video_counter,
+                }
+                timeline_items.append(video_item)
+                video_items.append(video_item)
+
+            # Remove zero-length video segments
+            filtered_timeline = []
+            filtered_video_items = []
+            for item in timeline_items:
+                if item["type"] == "video":
+                    if item["end"] - item["start"] > 1e-3:
+                        filtered_timeline.append(item)
+                        filtered_video_items.append(item)
+                else:
+                    filtered_timeline.append(item)
+            timeline_items[:] = filtered_timeline
+            video_items[:] = filtered_video_items
+
+            def extract_video_batches():
+                if not video_items:
+                    print("No original video segments remain after blanking - skipping extraction step")
+                    progress_tracker.update_step(0, 1.0)
+                    progress_tracker.complete_step(0)
+                    return
+
+                total_segments = len(video_items)
+                max_segments_per_batch = 120
+                max_batch_duration = 600.0  # seconds
+                buffer_seconds = 0.5
+
+                batches = []
+                current_batch = []
+                batch_start = None
+                batch_end = None
+
+                for item in video_items:
+                    start = item["start"]
+                    end = item["end"]
+
+                    if batch_start is None:
+                        current_batch = [item]
+                        batch_start = start
+                        batch_end = end
+                        continue
+
+                    new_batch_end = max(batch_end, end)
+                    duration_span = new_batch_end - batch_start
+
+                    if len(current_batch) >= max_segments_per_batch or duration_span > max_batch_duration:
+                        batches.append((batch_start, batch_end, current_batch))
+                        current_batch = [item]
+                        batch_start = start
+                        batch_end = end
+                    else:
+                        current_batch.append(item)
+                        batch_end = new_batch_end
+
+                if current_batch:
+                    batches.append((batch_start, batch_end, current_batch))
+
+                print(f"Using chunked extraction: {len(batches)} batches for {total_segments} video segments")
+
+                processed_segments = 0
+
+                for batch_idx, (batch_start, batch_end, batch_items) in enumerate(batches):
+                    chunk_start = max(0.0, batch_start - buffer_seconds)
+                    chunk_end = min(total_duration, batch_end + buffer_seconds)
+                    chunk_duration = chunk_end - chunk_start
+                    if chunk_duration <= 0:
+                        continue
+
+                    chunk_path = temp_dir / f"chunk_{batch_idx}_{chunk_start:.3f}_{chunk_duration:.3f}.mp4"
+                    print(
+                        f"Extracting batch {batch_idx + 1}/{len(batches)}: {len(batch_items)} segments "
+                        f"({chunk_start:.1f}s-{chunk_end:.1f}s)"
+                    )
+                    chunk_cmd = [
+                        "ffmpeg",
+                        "-loglevel",
+                        "error",
+                        "-y",
+                        "-ss",
+                        f"{chunk_start:.6f}",
+                        "-i",
+                        str(input_video),
+                        "-t",
+                        f"{chunk_duration:.6f}",
+                        "-c",
+                        "copy",
+                        "-avoid_negative_ts",
+                        "make_zero",
+                        "-fflags",
+                        "+genpts",
+                        str(chunk_path),
+                    ]
+                    run_subprocess_with_encoding(chunk_cmd, check=True)
+
+                    for item in batch_items:
+                        segment_duration = item["end"] - item["start"]
+                        if segment_duration <= 0:
+                            continue
+
+                        relative_start = item["start"] - chunk_start
+                        if relative_start < 0:
+                            relative_start = 0.0
+
+                        segment_path = (
+                            temp_dir / f"video_{item['index']:05d}_{item['start']:.3f}_{segment_duration:.3f}.mp4"
+                        )
+                        segment_cmd = [
+                            "ffmpeg",
+                            "-loglevel",
+                            "error",
+                            "-y",
+                            "-i",
+                            str(chunk_path),
+                            "-ss",
+                            f"{relative_start:.6f}",
+                            "-t",
+                            f"{segment_duration:.6f}",
+                            "-c",
+                            "copy",
+                            "-avoid_negative_ts",
+                            "make_zero",
+                            "-fflags",
+                            "+genpts",
+                            str(segment_path),
+                        ]
+                        run_subprocess_with_encoding(segment_cmd, check=True)
+                        item["output_path"] = segment_path
+
+                        processed_segments += 1
+                        progress_tracker.update_step(0, processed_segments / total_segments)
+
+                    try:
+                        chunk_path.unlink()
+                    except OSError:
+                        pass
+
+                progress_tracker.complete_step(0)
+
+            extract_video_batches()
+
+            blank_count = len(blank_items)
+            if blank_count:
+                print(f"Phase 2/3: Creating {blank_count} blank segments...")
+                for idx, item in enumerate(blank_items, start=1):
+                    segment_duration = item["end"] - item["start"]
+                    if segment_duration <= 0:
+                        continue
+
+                    blank_segment_path = temp_dir / f"blank_{item['index']}.mp4"
+                    label_set = ", ".join(sorted(set(item.get("labels", [])))) or "(no label)"
+                    print(
+                        f"Creating blank video {item['index']} for {segment_duration:.3f}s "
+                        f"({item['segment_count']} segments: {label_set})"
+                    )
+                    create_gap_video_from_blank(blank_video_path, blank_segment_path, segment_duration)
+                    if not blank_segment_path.exists() or blank_segment_path.stat().st_size == 0:
+                        raise RuntimeError(f"Failed to create blank video: {blank_segment_path}")
+
+                    item["output_path"] = blank_segment_path
+                    progress_tracker.update_step(1, idx / blank_count)
+
+                progress_tracker.complete_step(1)
+            else:
+                print("Phase 2/3: No blank segments to create")
+                progress_tracker.update_step(1, 1.0)
+                progress_tracker.complete_step(1)
+
+            concat_paths = []
+            for item in timeline_items:
+                output_path = item.get("output_path")
+                if output_path:
+                    concat_paths.append(str(output_path.resolve()))
+
+            if not concat_paths:
+                print("No segments produced - copying original video")
+                shutil.copy(input_video, output_path)
+                progress_tracker.complete_step(2)
+                progress_tracker.complete()
+                return
+
+            with open(concat_file, "w") as f:
+                for file_path in concat_paths:
+                    f.write(f"file '{file_path}'\n")
+
+            debug_concat_file = input_video.parent / "concat_list.txt"
+            shutil.copy(concat_file, debug_concat_file)
+            print(f"Concat list saved for verification: {debug_concat_file}")
+
+            print(f"Phase 3/3: Concatenating {len(concat_paths)} segments...")
+            progress_tracker.update_step(2, 0.0)
+
+            final_concat_cmd = [
+                "ffmpeg",
+                "-loglevel",
+                "error",
+                "-y",
+                "-avoid_negative_ts",
+                "make_zero",
+                "-fflags",
+                "+genpts",
+                "-max_muxing_queue_size",
+                "9999",
+                "-f",
+                "concat",
+                "-safe",
+                "0",
+                "-i",
+                str(concat_file),
+                "-c",
+                "copy",
+                str(output_path),
+            ]
+
+            run_subprocess_with_encoding(final_concat_cmd, check=True)
+            progress_tracker.complete_step(2)
+            progress_tracker.complete()
+            print(f"Successfully created output: {output_path}")
+
+            if timeline_path and timeline_path.exists():
+                from .video_merger import add_video_removed_to_timeline
+
+                removed_segments_with_labels = []
+                for start_seconds, end_seconds, label, _ in privacy_segments:
+                    new_label = f"Removed {label}".strip() if label else "Removed"
+                    removed_segments_with_labels.append((start_seconds, end_seconds, new_label))
+
+                add_video_removed_to_timeline(timeline_path, removed_segments_with_labels)
+
+        if effect_types and effect_types <= {"blank"}:
+            print("Detected blank-only timeline. Using chunked extraction batches for improved performance.")
+            process_blank_segments_with_batches()
+            return
 
         # Calculate total expected processing time for user feedback
         estimated_minutes = len(merged_segments) * 0.8  # ~0.8s per merged segment average
@@ -1103,7 +1383,6 @@ def _apply_blank_video_concat_method(input_video, output_path, speech_segments, 
         def extract_segment_task(task):
             """Execute a single extraction task with optimized FFmpeg parameters."""
             try:
-                # Optimized FFmpeg command with better stream copy performance
                 cmd = [
                     "ffmpeg",
                     "-loglevel",
