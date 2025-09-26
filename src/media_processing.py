@@ -1014,14 +1014,34 @@ def _apply_blank_video_concat_method(input_video, output_path, speech_segments, 
                 current_time = end_seconds
 
             if current_time < total_duration - 1e-6:
-                video_item = {
-                    "type": "video",
-                    "start": current_time,
-                    "end": total_duration,
-                    "index": video_counter,
-                }
-                timeline_items.append(video_item)
-                video_items.append(video_item)
+                remaining_duration = total_duration - current_time
+                max_chunk_duration = 1800  # 30 minutes per chunk to avoid FFmpeg issues
+
+                if remaining_duration <= max_chunk_duration:
+                    # Small enough segment, add as-is
+                    video_item = {
+                        "type": "video",
+                        "start": current_time,
+                        "end": total_duration,
+                        "index": video_counter,
+                    }
+                    timeline_items.append(video_item)
+                    video_items.append(video_item)
+                else:
+                    # Break large segment into smaller chunks
+                    chunk_start = current_time
+                    while chunk_start < total_duration:
+                        chunk_end = min(chunk_start + max_chunk_duration, total_duration)
+                        video_item = {
+                            "type": "video",
+                            "start": chunk_start,
+                            "end": chunk_end,
+                            "index": video_counter,
+                        }
+                        timeline_items.append(video_item)
+                        video_items.append(video_item)
+                        video_counter += 1
+                        chunk_start = chunk_end
 
             # Remove zero-length video segments
             filtered_timeline = []
@@ -1221,14 +1241,14 @@ def _apply_blank_video_concat_method(input_video, output_path, speech_segments, 
                 "make_zero",
                 "-fflags",
                 "+genpts",
-                "-max_muxing_queue_size",
-                "9999",
                 "-f",
                 "concat",
                 "-safe",
                 "0",
                 "-i",
                 str(concat_file),
+                "-max_muxing_queue_size",
+                "9999",
                 "-c",
                 "copy",
                 str(output_path),
@@ -1248,6 +1268,10 @@ def _apply_blank_video_concat_method(input_video, output_path, speech_segments, 
                     removed_segments_with_labels.append((start_seconds, end_seconds, new_label))
 
                 add_video_removed_to_timeline(timeline_path, removed_segments_with_labels)
+
+        # Setup progress tracking for 3 phases with detailed feedback
+        progress_tracker = MultiStepProgressTracker(3, "Video Processing")
+        progress_tracker.set_step_names(["Segment Extraction", "Blank Creation", "Final Concatenation"])
 
         if effect_types and effect_types <= {"blank"}:
             print("Detected blank-only timeline. Using chunked extraction batches for improved performance.")
@@ -1269,10 +1293,6 @@ def _apply_blank_video_concat_method(input_video, output_path, speech_segments, 
             print("No privacy segments to process - copying original file")
             shutil.copy(input_video, output_path)
             return
-
-        # Setup progress tracking for 3 phases with detailed feedback
-        progress_tracker = MultiStepProgressTracker(3, "Video Processing")
-        progress_tracker.set_step_names(["Segment Extraction", "Blank Creation", "Final Concatenation"])
 
         print("Phase 1/3: Building extraction tasks...")
         progress_tracker.update_step(0, 0.0)

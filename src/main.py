@@ -153,6 +153,10 @@ def main():
             default=10,
             help="Duration of each processing batch in minutes for temporal batching (default: 10)",
         )
+        blank_parser.add_argument(
+            "--original-timeline",
+            help="Path to original timeline file for incremental processing comparison",
+        )
 
         compress_parser = subparsers.add_parser(
             "compress", help="Compress video files to H.264 with smaller file sizes"

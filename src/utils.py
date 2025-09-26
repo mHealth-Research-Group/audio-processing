@@ -150,10 +150,8 @@ def compare_timelines(original_timeline, modified_timeline):
             orig_type = orig_segment.get("type", "")
             modified_type = modified_segment.get("type", "")
 
-            # If segment was changed to 'all' or has effects, mark as changed
-            if (modified_type == "all" or
-                modified_type in ["speaking", "conversation"] or
-                modified_segment.get("label", "") in EFFECT_CONFIGS):
+            # Only mark as changed if the type actually changed
+            if orig_type != modified_type:
                 changed_segments.append(modified_segment)
             else:
                 unchanged_segments.append(modified_segment)

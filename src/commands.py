@@ -433,11 +433,20 @@ def apply_blank_command(args):
             # Determine whether to trim first frame (default: True, disabled with --no-trim-first-frame)
             trim_first_frame = not getattr(args, "no_trim_first_frame", False)
 
+            # Get original timeline path if provided
+            original_timeline_path = None
+            if hasattr(args, "original_timeline") and args.original_timeline:
+                original_timeline_path = Path(args.original_timeline)
+                if not original_timeline_path.exists():
+                    print(f"Warning: Original timeline not found: {original_timeline_path}")
+                    original_timeline_path = None
+
             success = apply_blank_incremental(
                 input_video=input_video,
                 modified_timeline_path=timeline_path,
                 output_path=output_path,
                 blank_video_path=blank_video_path,
+                original_timeline_path=original_timeline_path,
                 batch_duration_minutes=batch_duration_minutes,
                 trim_first_frame=trim_first_frame,
             )
