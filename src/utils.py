@@ -116,6 +116,115 @@ def load_timeline(timeline_path):
     return load_yaml(timeline_path)
 
 
+def compare_timelines(original_timeline, modified_timeline):
+    """
+    Compare two timelines and identify segments that have changed.
+
+    Args:
+        original_timeline: Timeline data from original processing (all segments marked as 'speech'/'silence')
+        modified_timeline: Timeline data with manual edits (some segments changed to 'all')
+
+    Returns:
+        dict with changed_segments, unchanged_segments, and processing_plan
+    """
+    original_segments = original_timeline.get("timeline", [])
+    modified_segments = modified_timeline.get("timeline", [])
+
+    changed_segments = []
+    unchanged_segments = []
+
+    # Create a mapping for quick lookup
+    modified_dict = {}
+    for segment in modified_segments:
+        key = (segment["start"], segment["end"])
+        modified_dict[key] = segment
+
+    # Compare each original segment with modified version
+    for orig_segment in original_segments:
+        key = (orig_segment["start"], orig_segment["end"])
+
+        if key in modified_dict:
+            modified_segment = modified_dict[key]
+
+            # Check if segment type changed to require processing
+            orig_type = orig_segment.get("type", "")
+            modified_type = modified_segment.get("type", "")
+
+            # If segment was changed to 'all' or has effects, mark as changed
+            if (modified_type == "all" or
+                modified_type in ["speaking", "conversation"] or
+                modified_segment.get("label", "") in EFFECT_CONFIGS):
+                changed_segments.append(modified_segment)
+            else:
+                unchanged_segments.append(modified_segment)
+        else:
+            # Segment was removed in modified timeline
+            unchanged_segments.append(orig_segment)
+
+    # Check for new segments in modified timeline
+    original_dict = {(s["start"], s["end"]): s for s in original_segments}
+    for modified_segment in modified_segments:
+        key = (modified_segment["start"], modified_segment["end"])
+        if key not in original_dict:
+            changed_segments.append(modified_segment)
+
+    return {
+        "changed_segments": changed_segments,
+        "unchanged_segments": unchanged_segments,
+        "total_changed": len(changed_segments),
+        "total_unchanged": len(unchanged_segments),
+        "change_percentage": len(changed_segments) / len(modified_segments) * 100 if modified_segments else 0
+    }
+
+
+def split_timeline_into_batches(segments, batch_duration_seconds=600):
+    """
+    Split timeline segments into temporal batches to prevent FFmpeg filter explosion.
+
+    Args:
+        segments: List of timeline segments to process
+        batch_duration_seconds: Duration of each batch in seconds (default 10 minutes)
+
+    Returns:
+        List of batches, each containing segments within that time range
+    """
+    if not segments:
+        return []
+
+    # Sort segments by start time
+    sorted_segments = sorted(segments, key=lambda s: mmss_to_seconds(s["start"]))
+
+    batches = []
+    current_batch = []
+    current_batch_start = 0
+
+    for segment in sorted_segments:
+        segment_start = mmss_to_seconds(segment["start"])
+
+        # If this segment starts beyond current batch window, start new batch
+        if segment_start >= current_batch_start + batch_duration_seconds:
+            if current_batch:
+                batches.append(current_batch)
+            current_batch = [segment]
+            current_batch_start = segment_start
+        else:
+            current_batch.append(segment)
+
+    # Add final batch if it has segments
+    if current_batch:
+        batches.append(current_batch)
+
+    return batches
+
+
+def get_timeline_cache_path(timeline_path):
+    """Get the cache path for storing original timeline for comparison."""
+    timeline_path = Path(timeline_path)
+    cache_dir = timeline_path.parent / ".timeline_cache"
+    cache_dir.mkdir(exist_ok=True)
+    return cache_dir / f"{timeline_path.stem}_original.yaml"
+
+
 def mmss_to_seconds(mmss_str):
     """Convert MM:SS.sss format to seconds."""
     parts = mmss_str.split(":")

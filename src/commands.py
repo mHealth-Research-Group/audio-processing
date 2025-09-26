@@ -140,6 +140,13 @@ def process_single_file(args, gap_info=None):
                 try:
                     save_yaml(timeline_data, timeline_output_path)
                     print(f"Timeline saved: {timeline_output_path}")
+
+                    # Cache original timeline for future incremental processing
+                    try:
+                        from .incremental_processing import cache_original_timeline
+                        cache_original_timeline(timeline_output_path)
+                    except ImportError:
+                        pass  # Incremental processing not available
                 except Exception as e:
                     print(f"Warning: Failed to save timeline to {timeline_output_path}: {e}")
 
@@ -414,6 +421,48 @@ def apply_blank_command(args):
     # Set output path - keep same name as input if not specified (preserves _processed suffix)
     output_path = Path(args.output) if args.output else input_video
 
+    # Check if incremental processing is available and beneficial
+    use_incremental = not getattr(args, "no_incremental", False)  # Default to incremental unless disabled
+    batch_duration_minutes = getattr(args, "batch_duration", 10)  # Default 10-minute batches
+
+    if use_incremental:
+        print("Using incremental processing with temporal batching...")
+        try:
+            from .incremental_processing import apply_blank_incremental
+
+            # Determine whether to trim first frame (default: True, disabled with --no-trim-first-frame)
+            trim_first_frame = not getattr(args, "no_trim_first_frame", False)
+
+            success = apply_blank_incremental(
+                input_video=input_video,
+                modified_timeline_path=timeline_path,
+                output_path=output_path,
+                blank_video_path=blank_video_path,
+                batch_duration_minutes=batch_duration_minutes,
+                trim_first_frame=trim_first_frame,
+            )
+
+            if success:
+                print(f"Incremental processing completed successfully: {output_path}")
+                return 0
+            else:
+                print("Incremental processing failed, falling back to legacy method...")
+                use_incremental = False
+        except ImportError:
+            print("Incremental processing not available, using legacy method...")
+            use_incremental = False
+        except Exception as e:
+            print(f"Incremental processing error: {e}")
+            print("Falling back to legacy method...")
+            use_incremental = False
+
+    if not use_incremental:
+        # Legacy processing method
+        return _apply_blank_legacy(args, input_video, timeline_path, blank_video_path, output_path)
+
+
+def _apply_blank_legacy(args, input_video, timeline_path, blank_video_path, output_path):
+    """Legacy apply-blank implementation for fallback."""
     try:
         # Load timeline data
         timeline_data = load_timeline(timeline_path)
@@ -487,7 +536,7 @@ def apply_blank_command(args):
             except Exception as e:
                 print(f"Warning: Failed to save updated timeline: {e}")
 
-        print(f"Timeline edits applied successfully: {output_path}")
+        print(f"Legacy processing completed successfully: {output_path}")
         return 0
 
     except Exception as e:

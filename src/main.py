@@ -142,6 +142,17 @@ def main():
             action="store_true",
             help="Disable trimming of first frame for privacy preservation (default: trimming enabled)",
         )
+        blank_parser.add_argument(
+            "--no-incremental",
+            action="store_true",
+            help="Disable incremental processing (process entire video instead of just changed segments)",
+        )
+        blank_parser.add_argument(
+            "--batch-duration",
+            type=int,
+            default=10,
+            help="Duration of each processing batch in minutes for temporal batching (default: 10)",
+        )
 
         compress_parser = subparsers.add_parser(
             "compress", help="Compress video files to H.264 with smaller file sizes"
