@@ -1,10 +1,8 @@
 import subprocess
-import concurrent.futures
 from .utils import (
     EFFECT_CONFIGS,
     run_subprocess_with_encoding,
     mmss_to_seconds,
-    hhmmss_to_seconds,
     AUDIO_CODEC,
     AUDIO_BITRATE_STANDARD,
 )

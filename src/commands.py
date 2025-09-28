@@ -21,7 +21,6 @@ from .utils import (
     is_audio_file,
     is_video_file,
     load_timeline,
-    mmss_to_seconds,
     save_yaml,
 )
 from .file_operations import generate_output_path
