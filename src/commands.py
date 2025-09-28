@@ -403,166 +403,60 @@ def apply_timeline_edits_command(args):
 
 
 def apply_blank_command(args):
-    """Apply timeline edits using optimized two-mode engine from implementation-plan.md."""
+    """Apply timeline edits (type='all') using drift-proof v2 (keyframe-snapped stream-copy)."""
     input_video = Path(args.input_video)
-    timeline_path = Path(args.timeline)
+    modified_timeline = Path(args.timeline)
     blank_video_path = Path(args.blank_video)
 
     # Validate inputs
     if not input_video.exists():
         print(f"Error: Input video not found: {input_video}", file=sys.stderr)
         return 1
-    if not timeline_path.exists():
-        print(f"Error: Timeline file not found: {timeline_path}", file=sys.stderr)
+    if not modified_timeline.exists():
+        print(f"Error: Timeline file not found: {modified_timeline}", file=sys.stderr)
         return 1
     if not blank_video_path.exists():
         print(f"Error: Blank video not found: {blank_video_path}", file=sys.stderr)
         return 1
 
-    # Set output path - avoid in-place overwrite unless explicitly requested
-    if getattr(args, "output", None):
-        output_path = Path(args.output)
-    else:
-        output_path = input_video.parent / f"{input_video.stem}_edited{input_video.suffix}"
-
-    # Check if optimized processing is available and desired
-    use_optimized = not getattr(args, "no_optimized", False)  # Default to optimized unless disabled
-
-    if use_optimized:
+    # Resolve original timeline
+    original_timeline_path = None
+    if hasattr(args, "original_timeline") and args.original_timeline:
+        p = Path(args.original_timeline)
+        if p.exists():
+            original_timeline_path = p
+        else:
+            print(f"Warning: Original timeline not found at {p}")
+    if original_timeline_path is None:
         try:
-            from .optimized_apply_blank import apply_blank_optimized
+            from .utils import get_timeline_cache_path
 
-            # Determine whether to trim first frame (default: True, disabled with --no-trim-first-frame)
-            trim_first_frame = not getattr(args, "no_trim_first_frame", False)
+            cache_candidate = get_timeline_cache_path(modified_timeline)
+            if cache_candidate.exists():
+                print(f"Using cached original timeline: {cache_candidate}")
+                original_timeline_path = cache_candidate
+        except Exception:
+            pass
 
-            # Get original timeline path if provided
-            original_timeline_path = None
-            if hasattr(args, "original_timeline") and args.original_timeline:
-                original_timeline_path = Path(args.original_timeline)
-                if not original_timeline_path.exists():
-                    print(f"Warning: Original timeline not found: {original_timeline_path}")
-                    original_timeline_path = None
-
-            success = apply_blank_optimized(
-                input_video=input_video,
-                timeline_path=timeline_path,
-                output_path=output_path,
-                blank_video_path=blank_video_path,
-                original_timeline_path=original_timeline_path,
-                trim_first_frame=trim_first_frame,
-            )
-
-            if success:
-                print(f"Optimized processing completed successfully: {output_path}")
-                return 0
-            else:
-                print("Optimized processing failed, falling back to legacy method...")
-                use_optimized = False
-        except ImportError:
-            print("Optimized processing not available, using legacy method...")
-            use_optimized = False
-        except Exception as e:
-            print(f"Optimized processing error: {e}")
-            print("Falling back to legacy method...")
-            use_optimized = False
-
-    if not use_optimized:
-        # Legacy processing method
-        return _apply_blank_legacy(args, input_video, timeline_path, blank_video_path, output_path)
-
-
-def _apply_blank_legacy(args, input_video, timeline_path, blank_video_path, output_path):
-    """Legacy apply-blank implementation for fallback."""
-    try:
-        # Load timeline data
-        timeline_data = load_timeline(timeline_path)
-
-        # Extract segments by type
-        blank_segments = []
-        mute_segments = []
-        black_segments = []
-        timeline_modified = False
-
-        if "timeline" in timeline_data:
-            for segment in timeline_data["timeline"]:
-                segment_type = segment.get("type")
-                start_time = mmss_to_seconds(segment["start"])
-                end_time = mmss_to_seconds(segment["end"])
-
-                if segment_type == "all":
-                    # Blank video segments
-                    blank_segments.append((start_time, end_time))
-                    # Keep existing label or set to "Removed" if none provided
-                    if not segment.get("label"):
-                        segment["label"] = "Removed"
-                    timeline_modified = True
-                elif segment_type in ["speaking", "conversation"]:
-                    # Mute audio segments
-                    mute_segments.append((start_time, end_time))
-                    timeline_modified = True
-                else:
-                    # Check label-driven effects for black-only segments
-                    label = segment.get("label", "")
-                    effects = EFFECT_CONFIGS.get(label, {"mute_audio": False, "black_video": False})
-                    if effects.get("black_video") and not effects.get("mute_audio"):
-                        black_segments.append((start_time, end_time))
-                        timeline_modified = True
-
-        # Check if any segments need processing
-        total_segments = len(blank_segments) + len(mute_segments)
-        if total_segments == 0:
-            print("No segments marked for processing found in timeline")
-            print("Edit the timeline and set 'type' to:")
-            print("  - 'all' for blank video replacement")
-            print("  - 'speaking' or 'conversation' for audio muting")
-            return 0
-
-        print(f"Found {len(blank_segments)} segments for blank video, {len(mute_segments)} segments for audio muting")
-
-        # Apply blank video first if needed
-        if blank_segments:
-            from .media_processing import apply_blank_video_to_segments
-
-            # Determine whether to trim first frame (default: True, disabled with --no-trim-first-frame)
-            trim_first_frame = not getattr(args, "no_trim_first_frame", False)
-
-            apply_blank_video_to_segments(
-                input_video, output_path, blank_segments, blank_video_path, timeline_path, trim_first_frame
-            )
-            print(f"Applied blank video to {len(blank_segments)} segments")
-
-        # Apply remaining audio/video effects if needed (mute/black-only)
-        if mute_segments or black_segments:
-            from .media_processing import process_media_with_effects
-
-            # If we already applied blank video, use that as input
-            effects_input = output_path if blank_segments else input_video
-
-            effect_segments = {
-                "mute_only": mute_segments,
-                "black_only": black_segments,
-                "mute_and_black": [],
-            }
-            process_media_with_effects(effects_input, output_path, effect_segments)
-            if mute_segments:
-                print(f"Applied audio muting to {len(mute_segments)} segments")
-            if black_segments:
-                print(f"Applied black video to {len(black_segments)} segments")
-
-        # Save updated timeline if segments were modified
-        if timeline_modified:
-            try:
-                save_yaml(timeline_data, timeline_path)
-                print(f"Timeline updated: {timeline_path}")
-            except Exception as e:
-                print(f"Warning: Failed to save updated timeline: {e}")
-
-        print(f"Legacy processing completed successfully: {output_path}")
-        return 0
-
-    except Exception as e:
-        print(f"Error applying timeline edits: {e}", file=sys.stderr)
+    if original_timeline_path is None:
+        print("Error: Original timeline is required for diffing (--original-timeline)", file=sys.stderr)
         return 1
+
+    # Set output path - avoid in-place overwrite unless explicitly requested
+    output_path = Path(args.output) if getattr(args, "output", None) else input_video.parent / (
+        f"{input_video.stem}_edited{input_video.suffix}"
+    )
+
+    from .apply_blank_v2 import apply_blank_v2
+
+    return apply_blank_v2(
+        input_video=input_video,
+        original_timeline_path=original_timeline_path,
+        modified_timeline_path=modified_timeline,
+        blank_template=blank_video_path,
+        output_path=output_path,
+    )
+
 
 
 def compress_command(args):

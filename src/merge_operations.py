@@ -5,8 +5,8 @@ Handles merging logic, output path generation, and batch processing.
 
 from pathlib import Path
 from typing import List, Optional
-from .utils import generate_merged_filename
-from .video_merger import extract_timestamp_from_filename, merge_videos
+from .utils import generate_merged_filename, extract_timestamp_from_filename
+from .video_merger import merge_videos
 
 
 def detect_timestamped_videos(video_files: List[Path]) -> tuple[bool, int]:
