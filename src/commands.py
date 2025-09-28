@@ -141,13 +141,6 @@ def process_single_file(args, gap_info=None):
                     save_yaml(timeline_data, timeline_output_path)
                     print(f"Timeline saved: {timeline_output_path}")
 
-                    # Cache original timeline for future incremental processing
-                    try:
-                        from .incremental_processing import cache_original_timeline
-
-                        cache_original_timeline(timeline_output_path)
-                    except ImportError:
-                        pass  # Incremental processing not available
                 except Exception as e:
                     print(f"Warning: Failed to save timeline to {timeline_output_path}: {e}")
 
@@ -278,13 +271,12 @@ def process_directory(args):
             # Process the merged video (this will mute conversations by default)
             result = process_single_file(file_args, gap_info=gap_info)
 
-            # Add instructions for manual blank video application if timeline was generated
+            # Add instructions for manual timeline review if timeline was generated
             if args.generate_timeline:
                 timeline_path = file_args.timeline_output
                 print(f"\nTimeline generated: {timeline_path}")
-                print("To manually review and apply blank video to specific segments:")
-                print("  1. Edit the timeline JSON file - change 'type' to 'all' for segments you want blanked")
-                print(f"  2. Run: python main.py apply-blank {merged_output} {timeline_path}")
+                print("To manually review and edit specific segments:")
+                print("  1. Edit the timeline YAML file - modify 'type' field for segments you want to process")
 
             return result
 
@@ -401,61 +393,6 @@ def apply_timeline_edits_command(args):
     print(f"Processing complete. Successfully processed {processed_count} files.")
     return 0
 
-
-def apply_blank_command(args):
-    """Apply timeline edits (type='all') using drift-proof v2 (keyframe-snapped stream-copy)."""
-    input_video = Path(args.input_video)
-    modified_timeline = Path(args.timeline)
-    blank_video_path = Path(args.blank_video)
-
-    # Validate inputs
-    if not input_video.exists():
-        print(f"Error: Input video not found: {input_video}", file=sys.stderr)
-        return 1
-    if not modified_timeline.exists():
-        print(f"Error: Timeline file not found: {modified_timeline}", file=sys.stderr)
-        return 1
-    if not blank_video_path.exists():
-        print(f"Error: Blank video not found: {blank_video_path}", file=sys.stderr)
-        return 1
-
-    # Resolve original timeline
-    original_timeline_path = None
-    if hasattr(args, "original_timeline") and args.original_timeline:
-        p = Path(args.original_timeline)
-        if p.exists():
-            original_timeline_path = p
-        else:
-            print(f"Warning: Original timeline not found at {p}")
-    if original_timeline_path is None:
-        try:
-            from .utils import get_timeline_cache_path
-
-            cache_candidate = get_timeline_cache_path(modified_timeline)
-            if cache_candidate.exists():
-                print(f"Using cached original timeline: {cache_candidate}")
-                original_timeline_path = cache_candidate
-        except Exception:
-            pass
-
-    if original_timeline_path is None:
-        print("Error: Original timeline is required for diffing (--original-timeline)", file=sys.stderr)
-        return 1
-
-    # Set output path - avoid in-place overwrite unless explicitly requested
-    output_path = Path(args.output) if getattr(args, "output", None) else input_video.parent / (
-        f"{input_video.stem}_edited{input_video.suffix}"
-    )
-
-    from .apply_blank_v2 import apply_blank_v2
-
-    return apply_blank_v2(
-        input_video=input_video,
-        original_timeline_path=original_timeline_path,
-        modified_timeline_path=modified_timeline,
-        blank_template=blank_video_path,
-        output_path=output_path,
-    )
 
 
 

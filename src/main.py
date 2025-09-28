@@ -5,7 +5,6 @@ from dotenv import load_dotenv
 from .commands import (
     process_directory,
     process_single_file,
-    apply_blank_command,
     compress_command,
 )
 from .utils import ensure_utf8_encoding
@@ -130,33 +129,6 @@ def main():
         process_parser = subparsers.add_parser("process", help="Process a file or directory")
         add_process_arguments(process_parser)
 
-        blank_parser = subparsers.add_parser("apply-blank", help="Apply timeline edits: blank video, mute audio, etc.")
-        blank_parser.add_argument("input_video", help="Path to input video file")
-        blank_parser.add_argument("timeline", help="Path to timeline YAML file")
-        blank_parser.add_argument(
-            "--blank-video", default="blank_muted.MP4", help="Path to blank video file (default: blank_muted.MP4)"
-        )
-        blank_parser.add_argument("-o", "--output", help="Path for output file")
-        blank_parser.add_argument(
-            "--no-trim-first-frame",
-            action="store_true",
-            help="Disable trimming of first frame for privacy preservation (default: trimming enabled)",
-        )
-        blank_parser.add_argument(
-            "--no-incremental",
-            action="store_true",
-            help="Disable incremental processing (process entire video instead of just changed segments)",
-        )
-        blank_parser.add_argument(
-            "--batch-duration",
-            type=int,
-            default=10,
-            help="Duration of each processing batch in minutes for temporal batching (default: 10)",
-        )
-        blank_parser.add_argument(
-            "--original-timeline",
-            help="Path to original timeline file for incremental processing comparison",
-        )
 
         compress_parser = subparsers.add_parser(
             "compress", help="Compress video files to H.264 with smaller file sizes"
@@ -182,7 +154,6 @@ def main():
         args_list = sys.argv[1:]
         if not args_list or args_list[0] not in [
             "process",
-            "apply-blank",
             "compress",
         ]:
             if args_list and (Path(args_list[0]).exists() or Path(args_list[0]).is_dir()):
@@ -206,8 +177,6 @@ def main():
                 return process_directory(args)
             else:
                 return process_single_file(args)
-        elif args.mode == "apply-blank":
-            return apply_blank_command(args)
         elif args.mode == "compress":
             return compress_command(args)
         else:
