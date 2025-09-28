@@ -112,8 +112,46 @@ def save_yaml(data, file_path):
 
 
 def load_timeline(timeline_path):
-    """Load timeline from YAML file, trying multiple encodings."""
-    return load_yaml(timeline_path)
+    """Load and normalize a timeline YAML file.
+
+    Normalization:
+    - Accept both 'timeline' and 'Timeline' keys
+    - Normalize segment keys to lowercase: start/end/type/label
+    - Pass through other keys unchanged
+    """
+    data = load_yaml(timeline_path)
+
+    if not isinstance(data, dict):
+        return data
+
+    # Canonicalize timeline key
+    if "timeline" not in data and "Timeline" in data:
+        data["timeline"] = data.get("Timeline", [])
+
+    segments = data.get("timeline")
+    if isinstance(segments, list):
+        normalized = []
+        for seg in segments:
+            if isinstance(seg, dict):
+                # Normalize primary keys
+                new_seg = {}
+                for k, v in seg.items():
+                    lk = k.lower() if isinstance(k, str) else k
+                    # Map common variants
+                    if lk in {"start", "end", "type", "label", "note", "speakers", "duration"}:
+                        new_seg[lk] = v
+                    else:
+                        new_seg[k] = v
+                # Ensure required keys exist (best-effort)
+                for req in ("start", "end"):
+                    if req not in new_seg and req.capitalize() in seg:
+                        new_seg[req] = seg[req.capitalize()]
+                normalized.append(new_seg)
+            else:
+                normalized.append(seg)
+        data["timeline"] = normalized
+
+    return data
 
 
 def compare_timelines(original_timeline, modified_timeline):
@@ -150,8 +188,22 @@ def compare_timelines(original_timeline, modified_timeline):
             orig_type = orig_segment.get("type", "")
             modified_type = modified_segment.get("type", "")
 
-            # Only mark as changed if the type actually changed
-            if orig_type != modified_type:
+            # Also consider label-driven effect changes
+            orig_label = orig_segment.get("label", "")
+            mod_label = modified_segment.get("label", "")
+
+            type_changed = orig_type != modified_type
+
+            def _effects_for_label(lbl: str):
+                try:
+                    return EFFECT_CONFIGS.get(lbl or "", {"mute_audio": False, "black_video": False})
+                except Exception:
+                    return {"mute_audio": False, "black_video": False}
+
+            effect_changed = _effects_for_label(orig_label) != _effects_for_label(mod_label)
+
+            # Mark as changed if type or effective label effects changed
+            if type_changed or effect_changed:
                 changed_segments.append(modified_segment)
             else:
                 unchanged_segments.append(modified_segment)
@@ -171,7 +223,7 @@ def compare_timelines(original_timeline, modified_timeline):
         "unchanged_segments": unchanged_segments,
         "total_changed": len(changed_segments),
         "total_unchanged": len(unchanged_segments),
-        "change_percentage": len(changed_segments) / len(modified_segments) * 100 if modified_segments else 0
+        "change_percentage": len(changed_segments) / len(modified_segments) * 100 if modified_segments else 0,
     }
 
 

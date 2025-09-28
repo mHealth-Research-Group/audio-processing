@@ -88,7 +88,8 @@ def analyze_audio_content(context: ProcessingContext) -> Optional[Dict[str, Any]
     from .audio_analysis import analyze_audio_with_timeline
 
     try:
-        return analyze_audio_with_timeline(context.args, context.input_path, model)
+        # Use extracted audio when available to avoid redundant I/O and decoding
+        return analyze_audio_with_timeline(context.args, context.audio_for_analysis, model)
     except Exception as e:
         print(f"Error during audio analysis: {e}")
         return None

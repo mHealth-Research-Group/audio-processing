@@ -89,33 +89,39 @@ ruff format
 
 ## Performance Optimizations
 
-### Incremental Processing for Apply-Blank
-The `apply-blank` command now uses intelligent incremental processing to dramatically improve performance:
+### Optimized Apply-Blank Two-Mode Engine
+The `apply-blank` command now uses an intelligent two-mode engine for dramatic performance improvements:
 
-**Key Features:**
-- **Timeline Comparison**: Compares original vs modified timelines to detect changes
-- **Segment-Level Processing**: Only processes segments that actually changed (type changed to 'all')
-- **Temporal Batching**: Splits large operations into time-based chunks to prevent FFmpeg filter explosion
-- **Automatic Caching**: Caches original timeline during `--complete` processing for future comparisons
+**Mode 1: Single-Pass GPU Filter (Default)**
+- **One FFmpeg command** with filter_complex_script for maximum efficiency
+- **GPU acceleration**: Auto-detects NVENC/VAAPI/VideoToolbox, falls back to CPU
+- **Smart filtering**: Processes black_ranges ∪ mute_ranges in single pass
+- **Performance**: O(T) complexity, ~60-90 minutes for 1.5h video (vs 9+ hours legacy)
 
-**Performance Benefits:**
-- **Massive speedup**: Only process what actually changed instead of entire video
-- **Batch processing**: Prevents "FFmpeg filter explosion" that causes exponential slowdown
-- **Smart detection**: Automatically detects which segments need reprocessing
+**Mode 2: Incremental Stream-Copy Reuse (Small Changes)**
+- **Timeline comparison**: Only processes segments that actually changed (<20% threshold)
+- **Stream copy reuse**: Unchanged segments extracted with `-c copy` (no re-encoding)
+- **Codec preservation**: Uses `blank_muted.MP4` template with `-stream_loop -1` for exact codec match
+- **Performance**: O(M_changed), ~15-20 minutes for minimal changes
+
+**Auto-Selection Logic:**
+- **Mode 1**: Default for all cases, large changes, or black-only edits
+- **Mode 2**: Only when <20% changed AND no black-only edits
+- **Fallback**: Mode 2 automatically falls back to Mode 1 on any error
 
 **Usage:**
 ```bash
-# Incremental processing (default)
-uv run main.py apply-blank video.mp4 timeline.yaml -o output.mp4
+# Optimized processing (auto-selects mode)
+uv run main.py apply-blank video.mp4 timeline.yaml --blank-video blank_muted.MP4 -o output.mp4 --original-timeline original.yaml
 
-# Disable incremental processing (legacy method)
-uv run main.py apply-blank video.mp4 timeline.yaml -o output.mp4 --no-incremental
+# Force single-pass mode
+uv run main.py apply-blank video.mp4 timeline.yaml --blank-video blank_muted.MP4 -o output.mp4 --no-optimized
 
-# Adjust batch size for temporal batching
-uv run main.py apply-blank video.mp4 timeline.yaml -o output.mp4 --batch-duration 15
+# Disable privacy trimming
+uv run main.py apply-blank video.mp4 timeline.yaml --blank-video blank_muted.MP4 -o output.mp4 --no-trim-first-frame
 ```
 
-**Timeline Caching:**
-- Original timeline automatically cached during `main.py process --complete`
-- Cache stored in `.timeline_cache/` directory
-- Enables fast incremental processing for subsequent `apply-blank` operations
+**Key Fixes:**
+- **Codec consistency**: Uses `blank_muted.MP4` template to maintain exact HEVC codec
+- **Stream loop**: Handles any segment duration with `-stream_loop -1`
+- **No corruption**: Eliminates codec mismatch issues that caused video corruption

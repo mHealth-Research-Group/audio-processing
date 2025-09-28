@@ -144,6 +144,7 @@ def process_single_file(args, gap_info=None):
                     # Cache original timeline for future incremental processing
                     try:
                         from .incremental_processing import cache_original_timeline
+
                         cache_original_timeline(timeline_output_path)
                     except ImportError:
                         pass  # Incremental processing not available
@@ -336,7 +337,7 @@ def apply_timeline_edits_command(args):
         print("Consider processing in smaller batches of 10-20 files at a time.")
         return 1
 
-    _ = load_model()
+    # No ML model needed for timeline-only edits
     processed_count = 0
 
     try:
@@ -352,7 +353,7 @@ def apply_timeline_edits_command(args):
                 print(f"Error loading timeline {timeline_path.name}: {e}")
                 continue
 
-            if args.effect_labels:
+            if hasattr(args, "effect_labels") and args.effect_labels:
                 original_configs = EFFECT_CONFIGS.copy()
                 for label in EFFECT_CONFIGS:
                     EFFECT_CONFIGS[label] = {"mute_audio": False, "black_video": False}
@@ -375,7 +376,7 @@ def apply_timeline_edits_command(args):
             except Exception as e:
                 print(f"Error processing {media_path.name}: {e}")
 
-            if args.effect_labels:
+            if hasattr(args, "effect_labels") and args.effect_labels:
                 EFFECT_CONFIGS.clear()
                 EFFECT_CONFIGS.update(original_configs)
 
@@ -402,7 +403,7 @@ def apply_timeline_edits_command(args):
 
 
 def apply_blank_command(args):
-    """Apply timeline edits: blank video for 'all' segments, mute audio for 'speaking'/'conversation' segments."""
+    """Apply timeline edits using optimized two-mode engine from implementation-plan.md."""
     input_video = Path(args.input_video)
     timeline_path = Path(args.timeline)
     blank_video_path = Path(args.blank_video)
@@ -418,17 +419,18 @@ def apply_blank_command(args):
         print(f"Error: Blank video not found: {blank_video_path}", file=sys.stderr)
         return 1
 
-    # Set output path - keep same name as input if not specified (preserves _processed suffix)
-    output_path = Path(args.output) if args.output else input_video
+    # Set output path - avoid in-place overwrite unless explicitly requested
+    if getattr(args, "output", None):
+        output_path = Path(args.output)
+    else:
+        output_path = input_video.parent / f"{input_video.stem}_edited{input_video.suffix}"
 
-    # Check if incremental processing is available and beneficial
-    use_incremental = not getattr(args, "no_incremental", False)  # Default to incremental unless disabled
-    batch_duration_minutes = getattr(args, "batch_duration", 10)  # Default 10-minute batches
+    # Check if optimized processing is available and desired
+    use_optimized = not getattr(args, "no_optimized", False)  # Default to optimized unless disabled
 
-    if use_incremental:
-        print("Using incremental processing with temporal batching...")
+    if use_optimized:
         try:
-            from .incremental_processing import apply_blank_incremental
+            from .optimized_apply_blank import apply_blank_optimized
 
             # Determine whether to trim first frame (default: True, disabled with --no-trim-first-frame)
             trim_first_frame = not getattr(args, "no_trim_first_frame", False)
@@ -441,31 +443,30 @@ def apply_blank_command(args):
                     print(f"Warning: Original timeline not found: {original_timeline_path}")
                     original_timeline_path = None
 
-            success = apply_blank_incremental(
+            success = apply_blank_optimized(
                 input_video=input_video,
-                modified_timeline_path=timeline_path,
+                timeline_path=timeline_path,
                 output_path=output_path,
                 blank_video_path=blank_video_path,
                 original_timeline_path=original_timeline_path,
-                batch_duration_minutes=batch_duration_minutes,
                 trim_first_frame=trim_first_frame,
             )
 
             if success:
-                print(f"Incremental processing completed successfully: {output_path}")
+                print(f"Optimized processing completed successfully: {output_path}")
                 return 0
             else:
-                print("Incremental processing failed, falling back to legacy method...")
-                use_incremental = False
+                print("Optimized processing failed, falling back to legacy method...")
+                use_optimized = False
         except ImportError:
-            print("Incremental processing not available, using legacy method...")
-            use_incremental = False
+            print("Optimized processing not available, using legacy method...")
+            use_optimized = False
         except Exception as e:
-            print(f"Incremental processing error: {e}")
+            print(f"Optimized processing error: {e}")
             print("Falling back to legacy method...")
-            use_incremental = False
+            use_optimized = False
 
-    if not use_incremental:
+    if not use_optimized:
         # Legacy processing method
         return _apply_blank_legacy(args, input_video, timeline_path, blank_video_path, output_path)
 
@@ -479,6 +480,7 @@ def _apply_blank_legacy(args, input_video, timeline_path, blank_video_path, outp
         # Extract segments by type
         blank_segments = []
         mute_segments = []
+        black_segments = []
         timeline_modified = False
 
         if "timeline" in timeline_data:
@@ -498,6 +500,13 @@ def _apply_blank_legacy(args, input_video, timeline_path, blank_video_path, outp
                     # Mute audio segments
                     mute_segments.append((start_time, end_time))
                     timeline_modified = True
+                else:
+                    # Check label-driven effects for black-only segments
+                    label = segment.get("label", "")
+                    effects = EFFECT_CONFIGS.get(label, {"mute_audio": False, "black_video": False})
+                    if effects.get("black_video") and not effects.get("mute_audio"):
+                        black_segments.append((start_time, end_time))
+                        timeline_modified = True
 
         # Check if any segments need processing
         total_segments = len(blank_segments) + len(mute_segments)
@@ -522,20 +531,23 @@ def _apply_blank_legacy(args, input_video, timeline_path, blank_video_path, outp
             )
             print(f"Applied blank video to {len(blank_segments)} segments")
 
-        # Apply audio muting if needed
-        if mute_segments:
+        # Apply remaining audio/video effects if needed (mute/black-only)
+        if mute_segments or black_segments:
             from .media_processing import process_media_with_effects
 
-            # If we already applied blank video, use that as input for audio muting
-            mute_input = output_path if blank_segments else input_video
+            # If we already applied blank video, use that as input
+            effects_input = output_path if blank_segments else input_video
 
             effect_segments = {
                 "mute_only": mute_segments,
-                "black_only": [],
+                "black_only": black_segments,
                 "mute_and_black": [],
             }
-            process_media_with_effects(mute_input, output_path, effect_segments)
-            print(f"Applied audio muting to {len(mute_segments)} segments")
+            process_media_with_effects(effects_input, output_path, effect_segments)
+            if mute_segments:
+                print(f"Applied audio muting to {len(mute_segments)} segments")
+            if black_segments:
+                print(f"Applied black video to {len(black_segments)} segments")
 
         # Save updated timeline if segments were modified
         if timeline_modified:

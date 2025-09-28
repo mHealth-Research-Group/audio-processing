@@ -17,7 +17,7 @@ Performance Benefits:
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 from .utils import (
     compare_timelines,
@@ -54,7 +54,7 @@ def apply_blank_incremental(
     Returns:
         bool: True if processing succeeded, False otherwise
     """
-    print(f"Starting incremental apply-blank processing...")
+    print("Starting incremental apply-blank processing...")
 
     # Load modified timeline
     modified_timeline = load_timeline(modified_timeline_path)
@@ -80,6 +80,7 @@ def apply_blank_incremental(
             blank_video_path,
             batch_duration_minutes,
             trim_first_frame,
+            modified_timeline_path,
         )
     else:
         # Fall back to full processing with batching
@@ -102,16 +103,16 @@ def _process_incremental(
     blank_video_path: Path,
     batch_duration_minutes: int,
     trim_first_frame: bool,
+    modified_timeline_path: Path = None,
 ) -> bool:
-    """Process only changed segments incrementally."""
+    """Process only changed segments incrementally using standard apply_blank_video_to_segments."""
 
     # Compare timelines to identify changes
     comparison = compare_timelines(original_timeline, modified_timeline)
 
     changed_segments = comparison["changed_segments"]
-    unchanged_segments = comparison["unchanged_segments"]
 
-    print(f"Timeline comparison:")
+    print("Timeline comparison:")
     print(f"  Changed segments: {comparison['total_changed']}")
     print(f"  Unchanged segments: {comparison['total_unchanged']}")
     print(f"  Change percentage: {comparison['change_percentage']:.1f}%")
@@ -121,19 +122,46 @@ def _process_incremental(
         shutil.copy2(input_video, output_path)
         return True
 
-    # Split changed segments into batches if needed
-    batch_duration_seconds = batch_duration_minutes * 60
-    if len(changed_segments) > 50:  # Use batching for many segments
-        batches = split_timeline_into_batches(changed_segments, batch_duration_seconds)
-        print(f"Split {len(changed_segments)} changed segments into {len(batches)} batches")
-        return _process_batched_segments(
-            input_video, batches, unchanged_segments, output_path, blank_video_path, trim_first_frame
+    # Convert changed segments to the format expected by apply_blank_video_to_segments
+    # Only process segments that changed to 'all' type (need to be blanked)
+    segments_to_blank = []
+    for segment in changed_segments:
+        if segment.get("type") == "all":
+            start_str = segment.get("start", "0:00.000")
+            end_str = segment.get("end", "0:00.000")
+
+            # Convert time strings to seconds
+            start_seconds = mmss_to_seconds(start_str)
+            end_seconds = mmss_to_seconds(end_str)
+
+            segments_to_blank.append((start_seconds, end_seconds))
+
+    if not segments_to_blank:
+        print("No segments changed to 'all' type - copying original video")
+        shutil.copy2(input_video, output_path)
+        return True
+
+    print(f"Applying blank video to {len(segments_to_blank)} segments using standard processing...")
+
+    # Use the proven apply_blank_video_to_segments function
+    try:
+        from .media_processing import apply_blank_video_to_segments
+
+        apply_blank_video_to_segments(
+            input_video=input_video,
+            output_path=output_path,
+            speech_segments=segments_to_blank,
+            blank_video_path=blank_video_path,
+            timeline_path=modified_timeline_path,  # Use the actual modified timeline path
+            trim_first_frame=trim_first_frame,
         )
-    else:
-        # Process all changed segments at once
-        return _process_single_batch(
-            input_video, changed_segments, unchanged_segments, output_path, blank_video_path, trim_first_frame
-        )
+
+        print(f"Incremental processing completed successfully: {output_path}")
+        return True
+
+    except Exception as e:
+        print(f"Error in incremental processing: {e}")
+        return False
 
 
 def _process_full_with_batching(
@@ -191,7 +219,7 @@ def _process_batched_segments(
 
         # Process each batch
         for i, batch_segments in enumerate(segment_batches):
-            print(f"Processing batch {i+1}/{len(segment_batches)} ({len(batch_segments)} segments)...")
+            print(f"Processing batch {i + 1}/{len(segment_batches)} ({len(batch_segments)} segments)...")
 
             batch_output = temp_dir / f"batch_{i:03d}_processed.mp4"
 
@@ -200,7 +228,7 @@ def _process_batched_segments(
             )
 
             if not success:
-                print(f"Failed to process batch {i+1}")
+                print(f"Failed to process batch {i + 1}")
                 return False
 
             batch_outputs.append(batch_output)
@@ -208,9 +236,7 @@ def _process_batched_segments(
         # If we have unchanged segments, we need to create a smart concat
         # that interleaves unchanged original segments with processed batches
         if unchanged_segments:
-            return _smart_concat_with_unchanged(
-                input_video, batch_outputs, unchanged_segments, output_path
-            )
+            return _smart_concat_with_unchanged(input_video, batch_outputs, unchanged_segments, output_path)
         else:
             # Simple concatenation of processed batches
             return _concat_batch_outputs(batch_outputs, output_path)
@@ -319,12 +345,16 @@ def _concat_batch_outputs(batch_outputs: List[Path], output_path: Path) -> bool:
         # Use FFmpeg concat demuxer for fast concatenation
         cmd = [
             "ffmpeg",
-            "-f", "concat",
-            "-safe", "0",
-            "-i", str(concat_list_path),
-            "-c", "copy",  # No re-encoding
+            "-f",
+            "concat",
+            "-safe",
+            "0",
+            "-i",
+            str(concat_list_path),
+            "-c",
+            "copy",  # No re-encoding
             "-y",
-            str(output_path)
+            str(output_path),
         ]
 
         subprocess.run(cmd, check=True, capture_output=True)

@@ -169,10 +169,10 @@ def apply_saved_gaps_to_timeline(timeline_path: Path, gap_info_path: Path) -> No
                 "start": seconds_to_mmss(start_offset),
                 "end": seconds_to_mmss(end_offset),
                 "duration": seconds_to_mmss(duration),
-                "type": "silence",
+                "type": "gap",
                 "speakers": 0,
-                "label": "gap",
-                "audio_content": "no_speech",
+                "label": "NoVideo",
+                "video_content": "missing_video",
             }
 
             # Find insertion point to maintain chronological order
