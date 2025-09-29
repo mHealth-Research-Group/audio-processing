@@ -332,23 +332,30 @@ def _pregenerate_blank_segments(tasks: List[Dict], temp_dir: Path, tracker: Mult
     for i, duration in enumerate(sorted(blank_durations)):
         output_path = temp_dir / f"blank_pregenerated_{i}.mp4"
 
-        # Calculate loops needed
-        loops = max(0, int(duration / template_duration))
+        # Calculate loops needed - add extra loop for safety margin
+        loops = max(0, int(duration / template_duration) + 1)
 
-        # Generate blank segment by looping template then trimming
-        # Use re-encode for precise duration trimming (fast preset for speed)
+        # Create concat file listing the template multiple times
+        concat_input = temp_dir / f"blank_concat_{i}.txt"
+        with open(concat_input, "w") as f:
+            for _ in range(loops + 1):
+                f.write(f"file '{blank_template.absolute()}'\n")
+
+        # Generate blank by concatenating template, then trim to exact duration
+        # This works with stream copy since we're trimming a proper concat result
         cmd = [
             "ffmpeg", "-v", "quiet", "-y",
-            "-stream_loop", str(loops),
-            "-i", str(blank_template),
+            "-f", "concat", "-safe", "0",
+            "-i", str(concat_input),
             "-t", str(duration),
-            "-c:v", "libx264", "-preset", "ultrafast",
-            "-c:a", "copy",
+            "-c", "copy",
             str(output_path)
         ]
 
         try:
             subprocess.run(cmd, check=True)
+            concat_input.unlink(missing_ok=True)
+
             blank_map[duration] = output_path
 
             # Update progress
