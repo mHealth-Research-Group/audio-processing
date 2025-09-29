@@ -393,8 +393,6 @@ def apply_timeline_edits_command(args):
     return 0
 
 
-
-
 def compress_command(args):
     """
     Compress video files to H.264 with smaller file sizes using GPU acceleration when available.

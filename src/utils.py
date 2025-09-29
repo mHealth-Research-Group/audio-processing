@@ -111,6 +111,91 @@ def save_yaml(data, file_path):
         yaml.dump(data, f, default_flow_style=False, allow_unicode=True, indent=2, sort_keys=False)
 
 
+def resolve_timeline_overlaps(segments):
+    """
+    Resolve overlapping timeline segments where manual edits (type: 'all') take priority.
+
+    Args:
+        segments: List of timeline segments
+
+    Returns:
+        List of resolved segments with no overlaps
+    """
+    if not segments:
+        return []
+
+    # Sort segments by start time
+    def time_sort_key(segment):
+        return hhmmss_to_seconds(segment["start"])
+
+    sorted_segments = sorted(segments, key=time_sort_key)
+
+    # Separate manual edits from original segments
+    manual_edits = [s for s in sorted_segments if s.get("type") == "all"]
+    original_segments = [s for s in sorted_segments if s.get("type") != "all"]
+
+    if not manual_edits:
+        return sorted_segments
+
+    resolved_segments = []
+
+    # Process each original segment against all manual edits
+    for orig_segment in original_segments:
+        orig_start = hhmmss_to_seconds(orig_segment["start"])
+        orig_end = hhmmss_to_seconds(orig_segment["end"])
+
+        # Find all manual edits that overlap with this segment
+        overlapping_edits = []
+        for edit in manual_edits:
+            edit_start = hhmmss_to_seconds(edit["start"])
+            edit_end = hhmmss_to_seconds(edit["end"])
+
+            # Check for overlap
+            if edit_start < orig_end and edit_end > orig_start:
+                overlapping_edits.append((edit_start, edit_end, edit))
+
+        if not overlapping_edits:
+            # No overlaps, keep original segment
+            resolved_segments.append(orig_segment)
+        else:
+            # Sort overlapping edits by start time
+            overlapping_edits.sort(key=lambda x: x[0])
+
+            # Split the original segment around overlapping edits
+            current_start = orig_start
+
+            for edit_start, edit_end, edit in overlapping_edits:
+                # If there's a gap before this edit, create a segment
+                if current_start < edit_start:
+                    trimmed_segment = orig_segment.copy()
+                    trimmed_segment["start"] = seconds_to_hhmmss(current_start)
+                    trimmed_segment["end"] = seconds_to_hhmmss(edit_start)
+                    resolved_segments.append(trimmed_segment)
+
+                # Move current start to after this edit
+                current_start = max(current_start, edit_end)
+
+            # If there's remaining segment after all edits
+            if current_start < orig_end:
+                trimmed_segment = orig_segment.copy()
+                trimmed_segment["start"] = seconds_to_hhmmss(current_start)
+                trimmed_segment["end"] = seconds_to_hhmmss(orig_end)
+                resolved_segments.append(trimmed_segment)
+
+    # Add all manual edits
+    resolved_segments.extend(manual_edits)
+
+    # Sort final result by start time
+    return sorted(resolved_segments, key=time_sort_key)
+
+
+def seconds_to_hhmmss(seconds):
+    """Convert seconds to M:SS.mmm format (matching timeline format)."""
+    total_minutes = int(seconds // 60)
+    secs = seconds % 60
+    return f"{total_minutes}:{secs:06.3f}"
+
+
 def load_timeline(timeline_path):
     """Load and normalize a timeline YAML file.
 
@@ -118,6 +203,7 @@ def load_timeline(timeline_path):
     - Accept both 'timeline' and 'Timeline' keys
     - Normalize segment keys to lowercase: start/end/type/label
     - Pass through other keys unchanged
+    - Resolve overlapping segments where manual edits take priority
     """
     data = load_yaml(timeline_path)
 
@@ -149,7 +235,8 @@ def load_timeline(timeline_path):
                 normalized.append(new_seg)
             else:
                 normalized.append(seg)
-        data["timeline"] = normalized
+        # Resolve overlapping segments where manual edits take priority
+        data["timeline"] = resolve_timeline_overlaps(normalized)
 
     return data
 
@@ -163,13 +250,21 @@ def compare_timelines(original_timeline, modified_timeline):
         modified_timeline: Timeline data with manual edits (some segments changed to 'all')
 
     Returns:
-        dict with changed_segments, unchanged_segments, and processing_plan
+        dict with changed_segments, unchanged_segments, differences, and processing statistics
     """
     original_segments = original_timeline.get("timeline", [])
     modified_segments = modified_timeline.get("timeline", [])
 
+    # Sort both timelines by start time to ensure consistent ordering
+    def time_sort_key(segment):
+        return hhmmss_to_seconds(segment["start"])
+
+    original_segments = sorted(original_segments, key=time_sort_key)
+    modified_segments = sorted(modified_segments, key=time_sort_key)
+
     changed_segments = []
     unchanged_segments = []
+    differences = []
 
     # Create a mapping for quick lookup
     modified_dict = {}
@@ -205,11 +300,34 @@ def compare_timelines(original_timeline, modified_timeline):
             # Mark as changed if type or effective label effects changed
             if type_changed or effect_changed:
                 changed_segments.append(modified_segment)
+                # Store the difference
+                # Set modified label to "removed" if no label is provided in modified segment
+                final_mod_label = mod_label if mod_label else "removed"
+                differences.append(
+                    {
+                        "type": "CHANGED",
+                        "start": orig_segment["start"],
+                        "end": orig_segment["end"],
+                        "original_type": orig_type,
+                        "modified_type": modified_type,
+                        "original_label": orig_label,
+                        "modified_label": final_mod_label,
+                    }
+                )
             else:
                 unchanged_segments.append(modified_segment)
         else:
             # Segment was removed in modified timeline
             unchanged_segments.append(orig_segment)
+            differences.append(
+                {
+                    "type": "REMOVED",
+                    "start": orig_segment["start"],
+                    "end": orig_segment["end"],
+                    "original_type": orig_segment.get("type", ""),
+                    "original_label": orig_segment.get("label", ""),
+                }
+            )
 
     # Check for new segments in modified timeline
     original_dict = {(s["start"], s["end"]): s for s in original_segments}
@@ -217,10 +335,20 @@ def compare_timelines(original_timeline, modified_timeline):
         key = (modified_segment["start"], modified_segment["end"])
         if key not in original_dict:
             changed_segments.append(modified_segment)
+            differences.append(
+                {
+                    "type": "ADDED",
+                    "start": modified_segment["start"],
+                    "end": modified_segment["end"],
+                    "modified_type": modified_segment.get("type", ""),
+                    "modified_label": modified_segment.get("label", ""),
+                }
+            )
 
     return {
         "changed_segments": changed_segments,
         "unchanged_segments": unchanged_segments,
+        "differences": differences,
         "total_changed": len(changed_segments),
         "total_unchanged": len(unchanged_segments),
         "change_percentage": len(changed_segments) / len(modified_segments) * 100 if modified_segments else 0,

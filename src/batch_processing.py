@@ -350,31 +350,81 @@ class BatchProcessor:
             return False
 
     def _merge_timelines(self):
-        """Merge timeline files from all batches."""
+        """Merge timeline files from all batches with proper time offset handling."""
         try:
             timeline_files = list(self.batch_dir.glob("batch_*_timeline.yaml"))
             if not timeline_files:
                 return
 
-            # Load first timeline as base
-            from .utils import load_timeline
+            from .utils import load_timeline, mmss_to_seconds, seconds_to_mmss
+            import re
 
             merged_timeline = {"timeline": [], "summary": {}}
+            cumulative_offset = 0.0  # Track cumulative time offset
 
             for timeline_file in sorted(timeline_files):
                 batch_timeline = load_timeline(timeline_file)
 
-                if "timeline" in batch_timeline:
-                    # Adjust timestamps for this batch
+                if "timeline" in batch_timeline and batch_timeline["timeline"]:
+                    # Get batch number from filename (e.g., batch_0_timeline.yaml -> 0)
+                    match = re.search(r"batch_(\d+)_timeline\.yaml", timeline_file.name)
+                    batch_num = int(match.group(1)) if match else 0
+
+                    logger.info(f"Processing batch {batch_num} timeline with offset {cumulative_offset:.3f}s")
+
+                    # Find the maximum end time in this batch to calculate next offset
+                    batch_max_end = 0.0
+                    adjusted_segments = []
+
                     for segment in batch_timeline["timeline"]:
-                        # Add current offset to start/end times
-                        # This would need more sophisticated time handling
-                        merged_timeline["timeline"].append(segment)
+                        # Parse times and add cumulative offset
+                        start_seconds = mmss_to_seconds(segment["start"]) + cumulative_offset
+                        end_seconds = mmss_to_seconds(segment["end"]) + cumulative_offset
+
+                        # Update maximum end time for this batch
+                        batch_max_end = max(batch_max_end, end_seconds)
+
+                        # Create adjusted segment
+                        adjusted_segment = segment.copy()
+                        adjusted_segment["start"] = seconds_to_mmss(start_seconds)
+                        adjusted_segment["end"] = seconds_to_mmss(end_seconds)
+
+                        # Update duration if it exists
+                        if "duration" in adjusted_segment:
+                            duration_seconds = mmss_to_seconds(adjusted_segment["duration"])
+                            adjusted_segment["duration"] = seconds_to_mmss(duration_seconds)
+
+                        adjusted_segments.append(adjusted_segment)
+
+                    # Add all adjusted segments from this batch
+                    merged_timeline["timeline"].extend(adjusted_segments)
+
+                    # Update cumulative offset for next batch
+                    cumulative_offset = batch_max_end
+
+                    logger.info(
+                        f"Batch {batch_num}: Added {len(adjusted_segments)} segments, next offset: {cumulative_offset:.3f}s"
+                    )
+
+            # Sort final timeline by start time to ensure proper ordering
+            merged_timeline["timeline"].sort(key=lambda x: mmss_to_seconds(x["start"]))
+
+            # Update summary if available
+            if merged_timeline["timeline"]:
+                total_duration = cumulative_offset
+                merged_timeline["summary"] = {
+                    "total_duration": seconds_to_mmss(total_duration),
+                    "num_segments": len(merged_timeline["timeline"]),
+                    "batches_merged": len(timeline_files),
+                }
 
             # Save merged timeline
             final_timeline_path = self.output_path.parent / f"{self.output_path.stem}_timeline.yaml"
             save_yaml(merged_timeline, final_timeline_path)
             logger.info(f"📄 Merged timeline saved: {final_timeline_path}")
+            logger.info(
+                f"📊 Total segments: {len(merged_timeline['timeline'])}, Duration: {seconds_to_mmss(cumulative_offset)}"
+            )
 
         except Exception as e:
             logger.warning(f"Failed to merge timelines: {e}")

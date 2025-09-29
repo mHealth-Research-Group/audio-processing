@@ -20,7 +20,9 @@ COMPLETE_FLAG_TARGETS = ("merge_videos", "generate_timeline", "analyze_speakers"
 
 def _add_process_arguments(parser: argparse.ArgumentParser) -> None:
     """Attach process-specific CLI arguments to the parser."""
-    parser.add_argument("input_path", help="Path to input audio/video file or directory")
+    parser.add_argument(
+        "-i", "--input", dest="input_path", required=True, help="Path to input audio/video file or directory"
+    )
 
     general_group = parser.add_argument_group("General")
     general_group.add_argument("-o", "--output", help="Path for output file or directory.")
@@ -126,7 +128,7 @@ def _add_process_arguments(parser: argparse.ArgumentParser) -> None:
 
 def _add_compress_arguments(parser: argparse.ArgumentParser) -> None:
     """Attach arguments for the compress command."""
-    parser.add_argument("input_path", help="Path to input video file or directory")
+    parser.add_argument("-i", "--input", dest="input_path", required=True, help="Path to input video file or directory")
     parser.add_argument("-o", "--output", help="Path for output file or directory")
     parser.add_argument(
         "--quality",
@@ -150,7 +152,9 @@ def _add_compress_arguments(parser: argparse.ArgumentParser) -> None:
 
 def _add_edit_arguments(parser: argparse.ArgumentParser) -> None:
     """Attach edit-specific CLI arguments to the parser."""
-    parser.add_argument("input_path", help="Path to input audio/video file or directory")
+    parser.add_argument(
+        "-i", "--input", dest="input_path", required=True, help="Path to input audio/video file or directory"
+    )
     parser.add_argument(
         "-o",
         "--output",
@@ -226,9 +230,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_compress_arguments(compress_parser)
     compress_parser.set_defaults(handler=compress_command)
 
-    edit_parser = subparsers.add_parser(
-        "edit", help="Apply manual timeline edits to processed media"
-    )
+    edit_parser = subparsers.add_parser("edit", help="Apply manual timeline edits to processed media")
     _add_edit_arguments(edit_parser)
     edit_parser.set_defaults(handler=handle_edit_command)
 
