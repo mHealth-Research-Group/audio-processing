@@ -114,11 +114,11 @@ def _apply_video_edits(media_path: Path, changed_segments: List[Dict], output_pa
     """Apply video edits using keyframe-aligned stream copy approach."""
     try:
         # Setup progress tracking
-        tracker = MultiStepProgressTracker(4, "Video Edit Processing")
-        tracker.set_step_names(["Video Validation", "Extraction Planning", "Segment Processing", "Final Assembly"])
+        tracker = MultiStepProgressTracker(5, "Video Edit Processing")
+        tracker.set_step_names(["Video Validation", "Extraction Planning", "Blank Pregeneration", "Segment Processing", "Final Assembly"])
 
         # Step 1: Video validation and optimization
-        print("Step 1/4: Video analysis...")
+        print("Step 1/5: Video analysis...")
 
         # Quick validation of video file
         is_video_accessible = _validate_video_quick(media_path)
@@ -132,25 +132,32 @@ def _apply_video_edits(media_path: Path, changed_segments: List[Dict], output_pa
         tracker.complete_step(0)
 
         # Step 2: Create extraction plan
-        print("Step 2/4: Planning edits...")
+        print("Step 2/5: Planning edits...")
         extraction_plan = _create_extraction_plan(media_path, changed_segments, keyframes)
         print(f"   Created plan for {len(extraction_plan['tasks'])} segments")
         tracker.complete_step(1)
 
-        # Step 3: Execute extractions and blank generation
-        print(f"Step 3/4: Processing {len(extraction_plan['tasks'])} segments...")
         # Use local temp directory next to media to avoid system temp space issues
         base_tmp = media_path.parent / "tmp"
         base_tmp.mkdir(exist_ok=True)
         job_tmp_path = Path(tempfile.mkdtemp(prefix="video_edit_", dir=str(base_tmp)))
 
         try:
-            success = _extract_segments_parallel(extraction_plan["tasks"], job_tmp_path, tracker, media_path)
+            # Step 3: Pregenerate all blank segments
+            print("Step 3/5: Pregenerating blank segments...")
+            blank_segments_map = _pregenerate_blank_segments(extraction_plan["tasks"], job_tmp_path, tracker)
+            if blank_segments_map is None:
+                return False
+            tracker.complete_step(2)
+
+            # Step 4: Execute extractions
+            print(f"Step 4/5: Processing {len(extraction_plan['tasks'])} segments...")
+            success = _extract_segments_parallel(extraction_plan["tasks"], job_tmp_path, tracker, media_path, blank_segments_map)
             if not success:
                 return False
 
-            # Step 4: Final assembly
-            print("Step 4/4: Assembling final video...")
+            # Step 5: Final assembly
+            print("Step 5/5: Assembling final video...")
             concat_success = _concat_segments(extraction_plan["concat_list"], output_path, job_tmp_path)
             tracker.complete()
 
@@ -292,13 +299,77 @@ def _get_video_duration(media_path: Path) -> float:
         return 0.0
 
 
+def _pregenerate_blank_segments(tasks: List[Dict], temp_dir: Path, tracker: MultiStepProgressTracker) -> Dict[float, Path] | None:
+    """Pregenerate all unique blank segment durations needed.
+
+    Returns a map of {duration: path} for reuse during extraction.
+    """
+    # Find all unique blank durations
+    blank_durations = set()
+    for task in tasks:
+        if task["type"] == "blank":
+            blank_durations.add(task["duration"])
+
+    if not blank_durations:
+        print("   No blank segments needed")
+        return {}
+
+    print(f"   Generating {len(blank_durations)} unique blank segment(s)...")
+
+    # Find blank template
+    blank_template = Path("blank_muted.MP4")
+    if not blank_template.exists():
+        print("   Error: blank_muted.MP4 not found")
+        return None
+
+    template_duration = _get_video_duration(blank_template)
+    if template_duration <= 0:
+        print("   Error: Could not get duration of blank_muted.MP4")
+        return None
+
+    blank_map = {}
+
+    for i, duration in enumerate(sorted(blank_durations)):
+        output_path = temp_dir / f"blank_pregenerated_{i}.mp4"
+
+        # Calculate loops needed
+        loops = max(0, int(duration / template_duration))
+
+        # Generate blank segment by looping template then trimming
+        # Use re-encode for precise duration trimming (fast preset for speed)
+        cmd = [
+            "ffmpeg", "-v", "quiet", "-y",
+            "-stream_loop", str(loops),
+            "-i", str(blank_template),
+            "-t", str(duration),
+            "-c:v", "libx264", "-preset", "ultrafast",
+            "-c:a", "copy",
+            str(output_path)
+        ]
+
+        try:
+            subprocess.run(cmd, check=True)
+            blank_map[duration] = output_path
+
+            # Update progress
+            progress = (i + 1) / len(blank_durations)
+            tracker.update_step(2, progress)
+
+        except subprocess.CalledProcessError as e:
+            print(f"   Failed to generate blank segment ({duration}s): {e}")
+            return None
+
+    print(f"   Pregenerated {len(blank_map)} blank segment(s)")
+    return blank_map
+
+
 def _extract_segments_parallel(
-    tasks: List[Dict], temp_dir: Path, tracker: MultiStepProgressTracker, media_path: Path
+    tasks: List[Dict], temp_dir: Path, tracker: MultiStepProgressTracker, media_path: Path, blank_map: Dict[float, Path]
 ) -> bool:
     """Extract video segments in parallel using stream copy."""
 
     def extract_task(task_info):
-        task, media_path = task_info
+        task, media_path, blank_map = task_info
         output_path = temp_dir / task["output"]
 
         try:
@@ -335,11 +406,15 @@ def _extract_segments_parallel(
                         "copy",
                         str(output_path),
                     ]
+                subprocess.run(cmd, check=True)
             else:  # blank
-                # Create blank segment
-                return _create_blank_segment(task["duration"], output_path)
+                # Copy pregenerated blank segment
+                pregenerated = blank_map.get(task["duration"])
+                if not pregenerated or not pregenerated.exists():
+                    print(f"   Error: Pregenerated blank for {task['duration']}s not found")
+                    return False
+                shutil.copy2(pregenerated, output_path)
 
-            subprocess.run(cmd, check=True)
             return True
 
         except subprocess.CalledProcessError as e:
@@ -351,7 +426,7 @@ def _extract_segments_parallel(
     successful = 0
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-        task_infos = [(task, media_path) for task in tasks]
+        task_infos = [(task, media_path, blank_map) for task in tasks]
         futures = [executor.submit(extract_task, task_info) for task_info in task_infos]
 
         for i, future in enumerate(concurrent.futures.as_completed(futures)):
@@ -362,56 +437,14 @@ def _extract_segments_parallel(
 
                 # Update progress
                 progress = (i + 1) / len(tasks)
-                tracker.update_step(2, progress)
+                tracker.update_step(3, progress)
 
             except Exception as e:
                 print(f"Task failed: {e}")
 
-    tracker.complete_step(2)
+    tracker.complete_step(3)
     print(f"   Extracted {successful}/{len(tasks)} segments successfully")
     return successful == len(tasks)
-
-
-def _create_blank_segment(duration: float, output_path: Path) -> bool:
-    """Create blank video segment by looping blank_muted.MP4."""
-    try:
-        # Find blank_muted.MP4 in current directory
-        blank_template = Path("blank_muted.MP4")
-        if not blank_template.exists():
-            print("Error: blank_muted.MP4 not found in current directory")
-            return False
-
-        # Calculate how many loops we need
-        # Get duration of blank template
-        template_duration = _get_video_duration(blank_template)
-        if template_duration <= 0:
-            print("Error: Could not get duration of blank_muted.MP4")
-            return False
-
-        loops = max(1, int(duration / template_duration) + 1)
-
-        cmd = [
-            "ffmpeg",
-            "-v",
-            "quiet",
-            "-y",
-            "-stream_loop",
-            str(loops),
-            "-i",
-            str(blank_template),
-            "-t",
-            str(duration),
-            "-c",
-            "copy",
-            str(output_path),
-        ]
-
-        subprocess.run(cmd, check=True)
-        return True
-
-    except subprocess.CalledProcessError as e:
-        print(f"Failed to create blank segment: {e}")
-        return False
 
 
 def _concat_segments(concat_list: List[str], output_path: Path, temp_dir: Path) -> bool:
