@@ -21,7 +21,6 @@ from .utils import (
     is_audio_file,
     is_video_file,
     load_timeline,
-    mmss_to_seconds,
     save_yaml,
 )
 from .file_operations import generate_output_path
@@ -140,6 +139,7 @@ def process_single_file(args, gap_info=None):
                 try:
                     save_yaml(timeline_data, timeline_output_path)
                     print(f"Timeline saved: {timeline_output_path}")
+
                 except Exception as e:
                     print(f"Warning: Failed to save timeline to {timeline_output_path}: {e}")
 
@@ -270,13 +270,12 @@ def process_directory(args):
             # Process the merged video (this will mute conversations by default)
             result = process_single_file(file_args, gap_info=gap_info)
 
-            # Add instructions for manual blank video application if timeline was generated
+            # Add instructions for manual timeline review if timeline was generated
             if args.generate_timeline:
                 timeline_path = file_args.timeline_output
                 print(f"\nTimeline generated: {timeline_path}")
-                print("To manually review and apply blank video to specific segments:")
-                print("  1. Edit the timeline JSON file - change 'type' to 'all' for segments you want blanked")
-                print(f"  2. Run: python main.py apply-blank {merged_output} {timeline_path}")
+                print("To manually review and edit specific segments:")
+                print("  1. Edit the timeline YAML file - modify 'type' field for segments you want to process")
 
             return result
 
@@ -329,7 +328,7 @@ def apply_timeline_edits_command(args):
         print("Consider processing in smaller batches of 10-20 files at a time.")
         return 1
 
-    _ = load_model()
+    # No ML model needed for timeline-only edits
     processed_count = 0
 
     try:
@@ -345,7 +344,7 @@ def apply_timeline_edits_command(args):
                 print(f"Error loading timeline {timeline_path.name}: {e}")
                 continue
 
-            if args.effect_labels:
+            if hasattr(args, "effect_labels") and args.effect_labels:
                 original_configs = EFFECT_CONFIGS.copy()
                 for label in EFFECT_CONFIGS:
                     EFFECT_CONFIGS[label] = {"mute_audio": False, "black_video": False}
@@ -368,7 +367,7 @@ def apply_timeline_edits_command(args):
             except Exception as e:
                 print(f"Error processing {media_path.name}: {e}")
 
-            if args.effect_labels:
+            if hasattr(args, "effect_labels") and args.effect_labels:
                 EFFECT_CONFIGS.clear()
                 EFFECT_CONFIGS.update(original_configs)
 
@@ -392,107 +391,6 @@ def apply_timeline_edits_command(args):
 
     print(f"Processing complete. Successfully processed {processed_count} files.")
     return 0
-
-
-def apply_blank_command(args):
-    """Apply timeline edits: blank video for 'all' segments, mute audio for 'speaking'/'conversation' segments."""
-    input_video = Path(args.input_video)
-    timeline_path = Path(args.timeline)
-    blank_video_path = Path(args.blank_video)
-
-    # Validate inputs
-    if not input_video.exists():
-        print(f"Error: Input video not found: {input_video}", file=sys.stderr)
-        return 1
-    if not timeline_path.exists():
-        print(f"Error: Timeline file not found: {timeline_path}", file=sys.stderr)
-        return 1
-    if not blank_video_path.exists():
-        print(f"Error: Blank video not found: {blank_video_path}", file=sys.stderr)
-        return 1
-
-    # Set output path - keep same name as input if not specified (preserves _processed suffix)
-    output_path = Path(args.output) if args.output else input_video
-
-    try:
-        # Load timeline data
-        timeline_data = load_timeline(timeline_path)
-
-        # Extract segments by type
-        blank_segments = []
-        mute_segments = []
-        timeline_modified = False
-
-        if "timeline" in timeline_data:
-            for segment in timeline_data["timeline"]:
-                segment_type = segment.get("type")
-                start_time = mmss_to_seconds(segment["start"])
-                end_time = mmss_to_seconds(segment["end"])
-
-                if segment_type == "all":
-                    # Blank video segments
-                    blank_segments.append((start_time, end_time))
-                    # Keep existing label or set to "Removed" if none provided
-                    if not segment.get("label"):
-                        segment["label"] = "Removed"
-                    timeline_modified = True
-                elif segment_type in ["speaking", "conversation"]:
-                    # Mute audio segments
-                    mute_segments.append((start_time, end_time))
-                    timeline_modified = True
-
-        # Check if any segments need processing
-        total_segments = len(blank_segments) + len(mute_segments)
-        if total_segments == 0:
-            print("No segments marked for processing found in timeline")
-            print("Edit the timeline and set 'type' to:")
-            print("  - 'all' for blank video replacement")
-            print("  - 'speaking' or 'conversation' for audio muting")
-            return 0
-
-        print(f"Found {len(blank_segments)} segments for blank video, {len(mute_segments)} segments for audio muting")
-
-        # Apply blank video first if needed
-        if blank_segments:
-            from .media_processing import apply_blank_video_to_segments
-
-            # Determine whether to trim first frame (default: True, disabled with --no-trim-first-frame)
-            trim_first_frame = not getattr(args, "no_trim_first_frame", False)
-
-            apply_blank_video_to_segments(
-                input_video, output_path, blank_segments, blank_video_path, timeline_path, trim_first_frame
-            )
-            print(f"Applied blank video to {len(blank_segments)} segments")
-
-        # Apply audio muting if needed
-        if mute_segments:
-            from .media_processing import process_media_with_effects
-
-            # If we already applied blank video, use that as input for audio muting
-            mute_input = output_path if blank_segments else input_video
-
-            effect_segments = {
-                "mute_only": mute_segments,
-                "black_only": [],
-                "mute_and_black": [],
-            }
-            process_media_with_effects(mute_input, output_path, effect_segments)
-            print(f"Applied audio muting to {len(mute_segments)} segments")
-
-        # Save updated timeline if segments were modified
-        if timeline_modified:
-            try:
-                save_yaml(timeline_data, timeline_path)
-                print(f"Timeline updated: {timeline_path}")
-            except Exception as e:
-                print(f"Warning: Failed to save updated timeline: {e}")
-
-        print(f"Timeline edits applied successfully: {output_path}")
-        return 0
-
-    except Exception as e:
-        print(f"Error applying timeline edits: {e}", file=sys.stderr)
-        return 1
 
 
 def compress_command(args):

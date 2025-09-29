@@ -169,10 +169,10 @@ def apply_saved_gaps_to_timeline(timeline_path: Path, gap_info_path: Path) -> No
                 "start": seconds_to_mmss(start_offset),
                 "end": seconds_to_mmss(end_offset),
                 "duration": seconds_to_mmss(duration),
-                "type": "silence",
+                "type": "gap",
                 "speakers": 0,
-                "label": "gap",
-                "audio_content": "no_speech",
+                "label": "NoVideo",
+                "video_content": "missing_video",
             }
 
             # Find insertion point to maintain chronological order
@@ -279,6 +279,22 @@ def get_video_properties(video_path: Path) -> Dict[str, Any]:
         if not data.get("streams"):
             raise ValueError("No video stream found.")
         stream = data["streams"][0]
+        # Prefer container duration when stream duration is missing/inaccurate
+        duration = stream.get("duration")
+        if not duration or float(duration) <= 0:
+            fmt_cmd = [
+                "ffprobe",
+                "-v",
+                "quiet",
+                "-print_format",
+                "json",
+                "-show_format",
+                str(video_path),
+            ]
+            fmt_res = subprocess.run(fmt_cmd, capture_output=True, text=True, check=True)
+            fmt = json.loads(fmt_res.stdout)
+            duration = fmt.get("format", {}).get("duration", 0)
+
         r_frame_rate = stream.get("r_frame_rate", "30/1")
         return {
             "width": stream.get("width"),
@@ -286,7 +302,7 @@ def get_video_properties(video_path: Path) -> Dict[str, Any]:
             "fps": _parse_frame_rate(r_frame_rate),
             "codec": stream.get("codec_name"),
             "pixel_format": stream.get("pix_fmt", "yuv420p"),
-            "duration": float(stream.get("duration", 0)),
+            "duration": float(duration or 0),
         }
     except (subprocess.CalledProcessError, json.JSONDecodeError, ValueError) as e:
         logger.error(f"Failed to get properties for {video_path.name}: {e}")
@@ -298,6 +314,7 @@ def analyze_video_directory(directory: Path) -> List[VideoSegment]:
     Analyzes a directory for valid video files and extracts their properties.
     """
     segments = []
+    skipped = 0
     for f in sorted(directory.iterdir()):
         if f.is_file() and is_video_file(f):
             timestamp = extract_timestamp_from_filename(f.name)
@@ -307,8 +324,14 @@ def analyze_video_directory(directory: Path) -> List[VideoSegment]:
                     segments.append(VideoSegment(f, timestamp, properties["duration"]))
                 except Exception as e:
                     logger.warning(f"Skipping {f.name} due to error: {e}")
+            else:
+                skipped += 1
     if not segments:
         raise ValueError("No valid video segments found in the directory.")
+    # Ensure chronological order for correct gap detection
+    segments.sort(key=lambda s: s.timestamp)
+    if skipped:
+        logger.warning(f"Skipped {skipped} files without recognized timestamps in names")
     return segments
 
 
