@@ -4,20 +4,25 @@ import concurrent.futures
 import json
 import subprocess
 import tempfile
+import shutil
 from argparse import Namespace
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List
 
-from .utils import compare_timelines, load_timeline, mmss_to_seconds, MultiStepProgressTracker
+from .utils import load_timeline, mmss_to_seconds, MultiStepProgressTracker
 
 
 def handle_edit_command(args: Namespace) -> int:
-    """Entry point for the `edit` CLI command."""
+    """Entry point for the `edit` CLI command.
+
+    Simplified: assumes the provided timeline already contains manual edits
+    placed at the front (type: 'all' segments). We extract those ranges and
+    apply blanking over them without comparing to an original timeline.
+    """
     try:
         media_path = Path(args.input_path).expanduser().resolve()
         timeline_path = Path(args.timeline).expanduser().resolve()
-        edited_timeline_path = Path(args.edited_timeline).expanduser().resolve()
-        _validate_required_paths(media_path, timeline_path, edited_timeline_path)
+        _validate_required_paths(media_path, timeline_path)
     except (AttributeError, TypeError):
         print("Error: Missing required arguments for edit command.")
         return 1
@@ -26,21 +31,23 @@ def handle_edit_command(args: Namespace) -> int:
         return 1
 
     try:
-        original_timeline, modified_timeline = _load_timeline_pair(timeline_path, edited_timeline_path)
+        timeline = load_timeline(timeline_path)
+        if not isinstance(timeline, dict) or "timeline" not in timeline:
+            print(f"Invalid timeline structure: {timeline_path}")
+            return 1
     except Exception as exc:  # noqa: BLE001
-        print(f"Error loading timelines: {exc}")
+        print(f"Error loading timeline: {exc}")
         return 1
 
-    comparison = compare_timelines(original_timeline, modified_timeline)
-    _print_timeline_comparison(media_path, timeline_path, edited_timeline_path, comparison)
+    # Extract segments to blank (type == 'all'), after overlap resolution
+    changed_segments = _extract_all_edit_segments(timeline)
+    _print_edit_summary(media_path, timeline_path, changed_segments)
 
-    # Check if there are changes to apply
-    changed_segments = comparison.get("changed_segments", [])
     if not changed_segments:
-        print("No changes to apply.")
+        print("No 'all' edit segments found. Nothing to apply.")
         return 0
 
-    # Apply video edits if there are changes
+    # Apply video edits over the extracted ranges
     try:
         output_path = (
             Path(args.output) if args.output else media_path.parent / f"{media_path.stem}_edited{media_path.suffix}"
@@ -62,62 +69,44 @@ def handle_edit_command(args: Namespace) -> int:
         return 1
 
 
-def _validate_required_paths(media_path: Path, timeline_path: Path, edited_timeline_path: Path) -> None:
+def _validate_required_paths(media_path: Path, timeline_path: Path) -> None:
     if not media_path.exists():
         raise FileNotFoundError(f"Media path not found: {media_path}")
     if not timeline_path.exists():
         raise FileNotFoundError(f"Timeline file not found: {timeline_path}")
-    if not edited_timeline_path.exists():
-        raise FileNotFoundError(f"Edited timeline file not found: {edited_timeline_path}")
 
 
-def _load_timeline_pair(timeline_path: Path, edited_timeline_path: Path) -> Tuple[Dict[str, object], Dict[str, object]]:
-    original = load_timeline(timeline_path)
-    edited = load_timeline(edited_timeline_path)
-    if original is None:
-        raise ValueError(f"Timeline file is empty or invalid: {timeline_path}")
-    if edited is None:
-        raise ValueError(f"Edited timeline file is empty or invalid: {edited_timeline_path}")
-    return original, edited
+def _extract_all_edit_segments(timeline_data: Dict[str, object]) -> List[Dict]:
+    """Return a sorted list of 'all' segments from a normalized timeline.
+
+    Assumes `load_timeline` has already resolved overlaps so that manual
+    edits (type: 'all') take precedence. Only 'all' segments are used for
+    blanking in this simplified path.
+    """
+    segments = [s for s in timeline_data.get("timeline", []) if isinstance(s, dict)]
+    all_segs = [s for s in segments if s.get("type") == "all"]
+    all_segs.sort(key=lambda s: mmss_to_seconds(s["start"]))
+    return all_segs
 
 
-def _print_timeline_comparison(
-    media_path: Path,
-    original_path: Path,
-    edited_path: Path,
-    comparison: Dict[str, object],
-) -> None:
-    changed = comparison.get("total_changed", 0)
-    unchanged = comparison.get("total_unchanged", 0)
-    percentage = comparison.get("change_percentage", 0.0)
-
+def _print_edit_summary(media_path: Path, timeline_path: Path, all_segments: List[Dict]) -> None:
+    """Print a concise summary of edit segments to be applied."""
     print("Edit summary")
     print("------------")
     print(f"Media: {media_path}")
-    print(f"Original timeline: {original_path}")
-    print(f"Edited timeline: {edited_path}")
-    print(f"Segments changed: {changed}")
-    print(f"Segments unchanged: {unchanged}")
-    print(f"Change percentage: {percentage:.1f}%")
+    print(f"Timeline: {timeline_path}")
+    print(f"'all' segments to apply: {len(all_segments)}")
 
-    changed_segments = comparison.get("changed_segments", [])
-    if not changed_segments:
-        print("No differences detected between timelines.")
+    if not all_segments:
         return
 
-    preview_count = min(5, len(changed_segments))
+    preview_count = min(5, len(all_segments))
     print("")
-    print(f"Previewing first {preview_count} changed segment(s):")
-    for segment in changed_segments[:preview_count]:
+    print(f"Previewing first {preview_count} edit segment(s):")
+    for segment in all_segments[:preview_count]:
         start = segment.get("start", "?")
         end = segment.get("end", "?")
-        # Show type first (e.g., "all"), then label if it exists
-        segment_type = segment.get("type", "")
-        segment_label = segment.get("label", "")
-        if segment_label and segment_label != segment_type:
-            label = f"{segment_type} ({segment_label})"
-        else:
-            label = segment_type
+        label = segment.get("label", "all") or "all"
         print(f"  - {start} -> {end} ({label})")
 
 
@@ -150,19 +139,28 @@ def _apply_video_edits(media_path: Path, changed_segments: List[Dict], output_pa
 
         # Step 3: Execute extractions and blank generation
         print(f"Step 3/4: Processing {len(extraction_plan['tasks'])} segments...")
-        with tempfile.TemporaryDirectory(prefix="video_edit_") as temp_dir:
-            temp_path = Path(temp_dir)
+        # Use local temp directory next to media to avoid system temp space issues
+        base_tmp = media_path.parent / "tmp"
+        base_tmp.mkdir(exist_ok=True)
+        job_tmp_path = Path(tempfile.mkdtemp(prefix="video_edit_", dir=str(base_tmp)))
 
-            success = _extract_segments_parallel(extraction_plan["tasks"], temp_path, tracker, media_path)
+        try:
+            success = _extract_segments_parallel(extraction_plan["tasks"], job_tmp_path, tracker, media_path)
             if not success:
                 return False
 
             # Step 4: Final assembly
             print("Step 4/4: Assembling final video...")
-            concat_success = _concat_segments(extraction_plan["concat_list"], output_path, temp_path)
+            concat_success = _concat_segments(extraction_plan["concat_list"], output_path, job_tmp_path)
             tracker.complete()
 
             return concat_success
+        finally:
+            # Clean up job-specific temp files; keep base tmp dir
+            try:
+                shutil.rmtree(job_tmp_path, ignore_errors=True)
+            except Exception:
+                pass
 
     except Exception as e:
         print(f"Error in video processing: {e}")
@@ -234,6 +232,7 @@ def _create_extraction_plan(media_path: Path, changed_segments: List[Dict], keyf
                 "start": current_time,
                 "duration": edit_range["start"] - current_time,
                 "output": f"original_{i}.mp4",
+                "is_final": False,
             }
             tasks.append(task)
             concat_list.append(task["output"])
@@ -253,6 +252,7 @@ def _create_extraction_plan(media_path: Path, changed_segments: List[Dict], keyf
             "start": current_time,
             "duration": duration - current_time,
             "output": "original_final.mp4",
+            "is_final": True,
         }
         tasks.append(task)
         concat_list.append(task["output"])
@@ -304,21 +304,37 @@ def _extract_segments_parallel(
         try:
             if task["type"] == "original":
                 # Extract original segment with stream copy
-                cmd = [
-                    "ffmpeg",
-                    "-v",
-                    "quiet",
-                    "-y",
-                    "-ss",
-                    str(task["start"]),
-                    "-i",
-                    str(media_path),
-                    "-t",
-                    str(task["duration"]),
-                    "-c",
-                    "copy",
-                    str(output_path),
-                ]
+                # For the final original segment, omit -t to copy to EOF, preventing overshoot
+                if task.get("is_final"):
+                    cmd = [
+                        "ffmpeg",
+                        "-v",
+                        "quiet",
+                        "-y",
+                        "-ss",
+                        str(task["start"]),
+                        "-i",
+                        str(media_path),
+                        "-c",
+                        "copy",
+                        str(output_path),
+                    ]
+                else:
+                    cmd = [
+                        "ffmpeg",
+                        "-v",
+                        "quiet",
+                        "-y",
+                        "-ss",
+                        str(task["start"]),
+                        "-i",
+                        str(media_path),
+                        "-t",
+                        str(task["duration"]),
+                        "-c",
+                        "copy",
+                        str(output_path),
+                    ]
             else:  # blank
                 # Create blank segment
                 return _create_blank_segment(task["duration"], output_path)

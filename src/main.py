@@ -164,13 +164,10 @@ def _add_edit_arguments(parser: argparse.ArgumentParser) -> None:
         "-t",
         "--timeline",
         required=True,
-        help="Path to the original timeline YAML file.",
-    )
-    parser.add_argument(
-        "-e",
-        "--edited-timeline",
-        required=True,
-        help="Path to the edited timeline YAML file.",
+        help=(
+            "Path to the edited timeline YAML file. The file should include your manual edits "
+            "(type: 'all' segments) which take precedence over underlying segments."
+        ),
     )
 
 

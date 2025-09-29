@@ -72,12 +72,17 @@ uv run main.py process /path/to/videos --complete --output final_video.mp4
 uv run main.py process video.mp4 --generate-timeline
 ```
 
-### Apply privacy removal
-1. Edit the generated `_timeline.yaml` file - change `type: speech` to `type: all` for segments to remove
-2. Apply changes:
+### Apply timeline edits
+1. Edit the generated timeline (`*_timeline.yaml`). Mark segments to remove by setting `type: all`. You may place your manual edits at the front of the file if you prefer; the tool will correctly apply them regardless of position.
+2. Apply edits with the single‑timeline `edit` command:
 ```bash
-uv run main.py apply-blank video.mp4 video_timeline.yaml -o output.mp4
+uv run main.py edit -i video.mp4 -t video_timeline.yaml -o video_edited.mp4
 ```
+
+What this does:
+- Extracts only the `type: all` ranges from your edited timeline
+- Blanks those ranges while stream‑copying the rest to keep processing fast
+- Merges overlaps so manual `all` edits take precedence
 
 ### Merge timestamped videos only
 ```bash
@@ -119,7 +124,7 @@ The tool generates output files with the following naming conventions:
 
 - **Merged videos**: `YYYYMMDD_merged.mp4` (based on first clip's date)
 - **Processed videos**: `YYYYMMDD_processed.mp4` (based on original timestamp)
-- **Blanked videos**: Same name as processed video (preserves `_processed` suffix)
+- **Edited videos**: Defaults to `<original_stem>_edited<ext>` when using the `edit` command
 - **Compressed videos**: `YYYYMMDD_compressed.mp4` (based on original timestamp)
 
 Examples:
