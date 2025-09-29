@@ -601,8 +601,6 @@ def extract_segments_by_effects(timeline_data, target_effects=None):
     return segments
 
 
-
-
 def merge_consecutive_segments(segments):
     """
     Merge ONLY consecutive segments (no gaps) with same effect type.
@@ -852,8 +850,6 @@ def _build_keyframe_aligned_tasks(input_path, merged_segments, total_duration, t
         concat_list.append(str(final_segment_path.resolve()))
 
     return extraction_tasks, concat_list
-
-
 
 
 def trim_first_frame_func(input_video, output_path, first_frame_duration=0.033):
