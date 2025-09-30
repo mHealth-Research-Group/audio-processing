@@ -111,14 +111,14 @@ def _print_edit_summary(media_path: Path, timeline_path: Path, all_segments: Lis
 
 
 def _apply_video_edits(media_path: Path, changed_segments: List[Dict], output_path: Path) -> bool:
-    """Apply video edits using keyframe-aligned stream copy approach."""
+    """Apply video edits using filter-based blackout approach."""
     try:
         # Setup progress tracking
-        tracker = MultiStepProgressTracker(5, "Video Edit Processing")
-        tracker.set_step_names(["Video Validation", "Extraction Planning", "Blank Pregeneration", "Segment Processing", "Final Assembly"])
+        tracker = MultiStepProgressTracker(4, "Video Edit Processing")
+        tracker.set_step_names(["Video Validation", "Extraction Planning", "Segment Processing", "Final Assembly"])
 
-        # Step 1: Video validation and optimization
-        print("Step 1/5: Video analysis...")
+        # Step 1: Video validation
+        print("Step 1/4: Video analysis...")
 
         # Quick validation of video file
         is_video_accessible = _validate_video_quick(media_path)
@@ -126,13 +126,12 @@ def _apply_video_edits(media_path: Path, changed_segments: List[Dict], output_pa
             print("   Video validation failed - aborting")
             return False
 
-        # Use optimized time-based cuts for reliable processing
-        print("   Using time-based cuts for optimal performance")
+        print("   Using frame-accurate extraction with filter-based blackout")
         keyframes = []  # Skip keyframe detection for faster processing
         tracker.complete_step(0)
 
         # Step 2: Create extraction plan
-        print("Step 2/5: Planning edits...")
+        print("Step 2/4: Planning edits...")
         extraction_plan = _create_extraction_plan(media_path, changed_segments, keyframes)
         print(f"   Created plan for {len(extraction_plan['tasks'])} segments")
         tracker.complete_step(1)
@@ -143,22 +142,15 @@ def _apply_video_edits(media_path: Path, changed_segments: List[Dict], output_pa
         job_tmp_path = Path(tempfile.mkdtemp(prefix="video_edit_", dir=str(base_tmp)))
 
         try:
-            # Step 3: Pregenerate all blank segments
-            print("Step 3/5: Pregenerating blank segments...")
-            blank_segments_map = _pregenerate_blank_segments(extraction_plan["tasks"], job_tmp_path, tracker)
-            if blank_segments_map is None:
-                return False
-            tracker.complete_step(2)
-
-            # Step 4: Execute extractions
-            print(f"Step 4/5: Processing {len(extraction_plan['tasks'])} segments...")
-            success = _extract_segments_parallel(extraction_plan["tasks"], job_tmp_path, tracker, media_path, blank_segments_map)
+            # Step 3: Extract all segments from original video
+            print(f"Step 3/4: Extracting {len(extraction_plan['tasks'])} segments...")
+            success = _extract_segments_parallel(extraction_plan["tasks"], job_tmp_path, tracker, media_path)
             if not success:
                 return False
 
-            # Step 5: Final assembly
-            print("Step 5/5: Assembling final video...")
-            concat_success = _concat_segments(extraction_plan["concat_list"], output_path, job_tmp_path)
+            # Step 4: Final assembly with filtering
+            print("Step 4/4: Assembling final video with filters...")
+            concat_success = _concat_segments(extraction_plan["tasks"], output_path, job_tmp_path)
             tracker.complete()
 
             return concat_success
@@ -207,9 +199,10 @@ def _validate_video_quick(media_path: Path) -> bool:
 
 
 def _create_extraction_plan(media_path: Path, changed_segments: List[Dict], keyframes: List[float]) -> Dict:
-    """Create optimized extraction plan with keyframe alignment."""
-    # Get video duration
+    """Create optimized extraction plan with frame-accurate cutting."""
+    # Get video duration and fps
     duration = _get_video_duration(media_path)
+    fps = _get_video_fps(media_path)
 
     # Convert changed segments to time ranges and align to keyframes
     edit_ranges = []
@@ -226,45 +219,53 @@ def _create_extraction_plan(media_path: Path, changed_segments: List[Dict], keyf
     edit_ranges.sort(key=lambda x: x["start"])
     merged_ranges = _merge_overlapping_ranges(edit_ranges)
 
-    # Create extraction tasks
+    # Create extraction tasks - all from original video
+    # Segments needing blackout are marked with needs_blackout flag
     tasks = []
-    concat_list = []
     current_time = 0.0
 
     for i, edit_range in enumerate(merged_ranges):
         # Add original segment before edit
         if current_time < edit_range["start"]:
+            segment_duration = edit_range["start"] - current_time
             task = {
-                "type": "original",
                 "start": current_time,
-                "duration": edit_range["start"] - current_time,
-                "output": f"original_{i}.mp4",
+                "duration": segment_duration,
+                "frame_count": round(segment_duration * fps),
+                "output": f"segment_{len(tasks)}.mp4",
+                "needs_blackout": False,
                 "is_final": False,
             }
             tasks.append(task)
-            concat_list.append(task["output"])
 
-        # Add blank segment for edit
+        # Add segment that needs blackout (extracted from original, filtered during concat)
         edit_duration = edit_range["end"] - edit_range["start"]
-        blank_task = {"type": "blank", "duration": edit_duration, "output": f"blank_{i}.mp4"}
-        tasks.append(blank_task)
-        concat_list.append(blank_task["output"])
+        blackout_task = {
+            "start": edit_range["start"],
+            "duration": edit_duration,
+            "frame_count": round(edit_duration * fps),
+            "output": f"segment_{len(tasks)}.mp4",
+            "needs_blackout": True,
+            "is_final": False,
+        }
+        tasks.append(blackout_task)
 
         current_time = edit_range["end"]
 
     # Add final original segment if needed
     if current_time < duration:
+        segment_duration = duration - current_time
         task = {
-            "type": "original",
             "start": current_time,
-            "duration": duration - current_time,
-            "output": "original_final.mp4",
+            "duration": segment_duration,
+            "frame_count": round(segment_duration * fps),
+            "output": f"segment_{len(tasks)}.mp4",
+            "needs_blackout": False,
             "is_final": True,
         }
         tasks.append(task)
-        concat_list.append(task["output"])
 
-    return {"tasks": tasks, "concat_list": concat_list, "merged_ranges": merged_ranges}
+    return {"tasks": tasks, "merged_ranges": merged_ranges}
 
 
 def _merge_overlapping_ranges(ranges: List[Dict]) -> List[Dict]:
@@ -299,129 +300,74 @@ def _get_video_duration(media_path: Path) -> float:
         return 0.0
 
 
-def _pregenerate_blank_segments(tasks: List[Dict], temp_dir: Path, tracker: MultiStepProgressTracker) -> Dict[float, Path] | None:
-    """Pregenerate all unique blank segment durations needed.
+def _get_video_fps(media_path: Path) -> float:
+    """Get video frame rate using ffprobe."""
+    try:
+        cmd = ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_streams", str(media_path)]
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        data = json.loads(result.stdout)
 
-    Returns a map of {duration: path} for reuse during extraction.
-    """
-    # Find all unique blank durations
-    blank_durations = set()
-    for task in tasks:
-        if task["type"] == "blank":
-            blank_durations.add(task["duration"])
+        # Find video stream
+        for stream in data.get("streams", []):
+            if stream.get("codec_type") == "video":
+                # Parse fps from r_frame_rate (e.g., "30000/1001" or "30/1")
+                fps_str = stream.get("r_frame_rate", "30/1")
+                num, den = fps_str.split("/")
+                return float(num) / float(den)
 
-    if not blank_durations:
-        print("   No blank segments needed")
-        return {}
-
-    print(f"   Generating {len(blank_durations)} unique blank segment(s)...")
-
-    # Find blank template
-    blank_template = Path("blank_muted.MP4")
-    if not blank_template.exists():
-        print("   Error: blank_muted.MP4 not found")
-        return None
-
-    template_duration = _get_video_duration(blank_template)
-    if template_duration <= 0:
-        print("   Error: Could not get duration of blank_muted.MP4")
-        return None
-
-    blank_map = {}
-
-    for i, duration in enumerate(sorted(blank_durations)):
-        output_path = temp_dir / f"blank_pregenerated_{i}.mp4"
-
-        # Calculate loops needed - add extra loop for safety margin
-        loops = max(0, int(duration / template_duration) + 1)
-
-        # Create concat file listing the template multiple times
-        concat_input = temp_dir / f"blank_concat_{i}.txt"
-        with open(concat_input, "w") as f:
-            for _ in range(loops + 1):
-                f.write(f"file '{blank_template.absolute()}'\n")
-
-        # Generate blank by concatenating template, then trim to exact duration
-        # This works with stream copy since we're trimming a proper concat result
-        cmd = [
-            "ffmpeg", "-v", "quiet", "-y",
-            "-f", "concat", "-safe", "0",
-            "-i", str(concat_input),
-            "-t", str(duration),
-            "-c", "copy",
-            str(output_path)
-        ]
-
-        try:
-            subprocess.run(cmd, check=True)
-            concat_input.unlink(missing_ok=True)
-
-            blank_map[duration] = output_path
-
-            # Update progress
-            progress = (i + 1) / len(blank_durations)
-            tracker.update_step(2, progress)
-
-        except subprocess.CalledProcessError as e:
-            print(f"   Failed to generate blank segment ({duration}s): {e}")
-            return None
-
-    print(f"   Pregenerated {len(blank_map)} blank segment(s)")
-    return blank_map
+        # Fallback to 30 fps if not found
+        return 30.0
+    except Exception:
+        return 30.0
 
 
 def _extract_segments_parallel(
-    tasks: List[Dict], temp_dir: Path, tracker: MultiStepProgressTracker, media_path: Path, blank_map: Dict[float, Path]
+    tasks: List[Dict], temp_dir: Path, tracker: MultiStepProgressTracker, media_path: Path
 ) -> bool:
-    """Extract video segments in parallel using stream copy."""
+    """Extract video segments in parallel using stream copy from original video."""
 
     def extract_task(task_info):
-        task, media_path, blank_map = task_info
+        task, media_path = task_info
         output_path = temp_dir / task["output"]
 
         try:
-            if task["type"] == "original":
-                # Extract original segment with stream copy
-                # For the final original segment, omit -t to copy to EOF, preventing overshoot
-                if task.get("is_final"):
-                    cmd = [
-                        "ffmpeg",
-                        "-v",
-                        "quiet",
-                        "-y",
-                        "-ss",
-                        str(task["start"]),
-                        "-i",
-                        str(media_path),
-                        "-c",
-                        "copy",
-                        str(output_path),
-                    ]
-                else:
-                    cmd = [
-                        "ffmpeg",
-                        "-v",
-                        "quiet",
-                        "-y",
-                        "-ss",
-                        str(task["start"]),
-                        "-i",
-                        str(media_path),
-                        "-t",
-                        str(task["duration"]),
-                        "-c",
-                        "copy",
-                        str(output_path),
-                    ]
-                subprocess.run(cmd, check=True)
-            else:  # blank
-                # Copy pregenerated blank segment
-                pregenerated = blank_map.get(task["duration"])
-                if not pregenerated or not pregenerated.exists():
-                    print(f"   Error: Pregenerated blank for {task['duration']}s not found")
-                    return False
-                shutil.copy2(pregenerated, output_path)
+            # Extract segment from original video with stream copy
+            # For the final segment, omit frame count to copy to EOF
+            if task.get("is_final"):
+                cmd = [
+                    "ffmpeg",
+                    "-v",
+                    "quiet",
+                    "-y",
+                    "-ss",
+                    str(task["start"]),
+                    "-i",
+                    str(media_path),
+                    "-c",
+                    "copy",
+                    str(output_path),
+                ]
+            else:
+                # Use frame count for pixel-perfect precision
+                cmd = [
+                    "ffmpeg",
+                    "-v",
+                    "quiet",
+                    "-y",
+                    "-ss",
+                    str(task["start"]),
+                    "-i",
+                    str(media_path),
+                    "-frames:v",
+                    str(task["frame_count"]),
+                    "-c:v",
+                    "copy",
+                    "-c:a",
+                    "copy",
+                    str(output_path),
+                ]
 
+            subprocess.run(cmd, check=True)
             return True
 
         except subprocess.CalledProcessError as e:
@@ -433,7 +379,7 @@ def _extract_segments_parallel(
     successful = 0
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-        task_infos = [(task, media_path, blank_map) for task in tasks]
+        task_infos = [(task, media_path) for task in tasks]
         futures = [executor.submit(extract_task, task_info) for task_info in task_infos]
 
         for i, future in enumerate(concurrent.futures.as_completed(futures)):
@@ -444,47 +390,180 @@ def _extract_segments_parallel(
 
                 # Update progress
                 progress = (i + 1) / len(tasks)
-                tracker.update_step(3, progress)
+                tracker.update_step(2, progress)
 
             except Exception as e:
                 print(f"Task failed: {e}")
 
-    tracker.complete_step(3)
+    tracker.complete_step(2)
     print(f"   Extracted {successful}/{len(tasks)} segments successfully")
     return successful == len(tasks)
 
 
-def _concat_segments(concat_list: List[str], output_path: Path, temp_dir: Path) -> bool:
-    """Concatenate all segments using concat demuxer."""
+def _concat_segments(tasks: List[Dict], output_path: Path, temp_dir: Path) -> bool:
+    """Concatenate all segments using concat filter with blackout applied where needed."""
     try:
-        # Create concat file
-        concat_file = temp_dir / "concat_list.txt"
-        with open(concat_file, "w") as f:
-            for filename in concat_list:
-                segment_path = temp_dir / filename
-                if segment_path.exists():
-                    f.write(f"file '{segment_path.absolute()}'\n")
+        # Build list of input files from tasks
+        segment_paths = []
+        total_frames = 0
+        for task in tasks:
+            segment_path = temp_dir / task["output"]
+            if segment_path.exists():
+                segment_paths.append(segment_path)
+                total_frames += task.get("frame_count", 0)
+            else:
+                print(f"   Warning: Segment not found: {segment_path}")
+                return False
 
-        # Concatenate with stream copy
-        cmd = [
-            "ffmpeg",
-            "-v",
-            "quiet",
-            "-y",
-            "-f",
-            "concat",
-            "-safe",
-            "0",
-            "-i",
-            str(concat_file),
-            "-c",
-            "copy",
-            str(output_path),
-        ]
+        if not segment_paths:
+            print("   Error: No segments to concatenate")
+            return False
 
-        subprocess.run(cmd, check=True)
+        # Detect source codec from first segment
+        source_codec = _get_video_codec(segment_paths[0])
+        is_hevc = source_codec == "hevc"
+
+        # Create progress file
+        progress_file = temp_dir / "ffmpeg_progress.txt"
+
+        # Check for GPU encoder availability
+        has_gpu = (is_hevc and _has_encoder("hevc_nvenc")) or (not is_hevc and _has_encoder("h264_nvenc"))
+
+        # Build FFmpeg command with concat filter
+        cmd = ["ffmpeg", "-v", "error", "-y"]
+        cmd.extend(["-progress", str(progress_file), "-stats_period", "1"])
+
+        # Enable hardware decoding for GPU utilization
+        # Decode on GPU, transfer to CPU for filtering, then back to GPU for encoding
+        if has_gpu:
+            cmd.extend(["-hwaccel", "cuda"])
+
+        # Add all input files
+        for segment_path in segment_paths:
+            cmd.extend(["-i", str(segment_path)])
+
+        # Build filter_complex with blackout applied to marked segments
+        # For each segment: apply black+mute if needs_blackout, else passthrough
+        filter_parts = []
+        concat_inputs = []
+
+        for i, task in enumerate(tasks):
+            if task.get("needs_blackout", False):
+                # Apply black video and muted audio
+                filter_parts.append(f"[{i}:v]drawbox=color=black@1:t=fill[v{i}]")
+                filter_parts.append(f"[{i}:a]volume=0[a{i}]")
+            else:
+                # Passthrough unchanged
+                filter_parts.append(f"[{i}:v]null[v{i}]")
+                filter_parts.append(f"[{i}:a]anull[a{i}]")
+
+            concat_inputs.append(f"[v{i}][a{i}]")
+
+        # Combine all filters and concat
+        concat_filter = f"{''.join(concat_inputs)}concat=n={len(tasks)}:v=1:a=1[vout][aout]"
+        filter_complex = ";".join(filter_parts) + ";" + concat_filter
+
+        cmd.extend(["-filter_complex", filter_complex])
+        cmd.extend(["-map", "[vout]", "-map", "[aout]"])
+
+        # Select encoder based on source codec and GPU availability
+        using_gpu = False
+        if is_hevc:
+            if _has_encoder("hevc_nvenc"):
+                cmd.extend(["-c:v", "hevc_nvenc", "-preset", "p4", "-cq", "18"])
+                using_gpu = True
+                print(f"   Using GPU encoder (hevc_nvenc) with hardware decode for {total_frames:,} frames")
+            else:
+                cmd.extend(["-c:v", "libx265", "-preset", "medium", "-crf", "18"])
+                print(f"   Using CPU encoder (libx265) for {total_frames:,} frames - this will take longer")
+        else:
+            if _has_encoder("h264_nvenc"):
+                cmd.extend(["-c:v", "h264_nvenc", "-preset", "p4", "-cq", "18"])
+                using_gpu = True
+                print(f"   Using GPU encoder (h264_nvenc) with hardware decode for {total_frames:,} frames")
+            else:
+                cmd.extend(["-c:v", "libx264", "-preset", "medium", "-crf", "18"])
+                print(f"   Using CPU encoder (libx264) for {total_frames:,} frames")
+
+        cmd.extend(["-c:a", "aac", "-b:a", "192k"])
+        cmd.append(str(output_path))
+
+        # Ensure output directory exists
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Run FFmpeg with progress monitoring
+        import time
+        import threading
+
+        process = subprocess.Popen(cmd, stderr=subprocess.PIPE, text=True)
+
+        # Monitor progress in separate thread
+        def monitor_progress():
+            last_update = time.time()
+            while process.poll() is None:
+                if progress_file.exists():
+                    try:
+                        with open(progress_file, "r") as f:
+                            lines = f.readlines()
+                            progress_data = {}
+                            for line in lines:
+                                if "=" in line:
+                                    key, value = line.strip().split("=", 1)
+                                    progress_data[key] = value
+
+                            if "frame" in progress_data and time.time() - last_update > 15:
+                                frame = int(progress_data.get("frame", 0))
+                                speed = progress_data.get("speed", "0x")
+                                if total_frames > 0:
+                                    percent = (frame / total_frames) * 100
+                                    print(f"   Progress: {percent:.1f}% | Frame: {frame:,}/{total_frames:,} | Speed: {speed}")
+                                else:
+                                    print(f"   Frame: {frame:,} | Speed: {speed}")
+                                last_update = time.time()
+                    except Exception:
+                        pass
+                time.sleep(5)
+
+        monitor_thread = threading.Thread(target=monitor_progress, daemon=True)
+        monitor_thread.start()
+
+        # Wait for process to complete
+        process.wait()
+
+        # Clean up progress file
+        progress_file.unlink(missing_ok=True)
+
+        if process.returncode != 0:
+            stderr = process.stderr.read() if process.stderr else ""
+            raise subprocess.CalledProcessError(process.returncode, cmd, stderr=stderr)
+
         return True
 
     except subprocess.CalledProcessError as e:
         print(f"Failed to concatenate segments: {e}")
+        return False
+
+
+def _get_video_codec(media_path: Path) -> str:
+    """Get video codec name using ffprobe."""
+    try:
+        cmd = ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_streams", str(media_path)]
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        data = json.loads(result.stdout)
+
+        for stream in data.get("streams", []):
+            if stream.get("codec_type") == "video":
+                return stream.get("codec_name", "h264")
+
+        return "h264"
+    except Exception:
+        return "h264"
+
+
+def _has_encoder(encoder_name: str) -> bool:
+    """Check if specific encoder is available in FFmpeg."""
+    try:
+        result = subprocess.run(["ffmpeg", "-hide_banner", "-encoders"], capture_output=True, text=True, timeout=5)
+        return encoder_name in result.stdout
+    except Exception:
         return False
